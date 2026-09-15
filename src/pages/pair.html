@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark light" />
+<title>Pair Car · Clip to Car</title>
+<style>
+  :root { --bg:#0b0f14; --card:#141b23; --edge:#243040; --fg:#f4f7fb; --muted:#9fb0c3;
+          --accent:#37c8ff; --accent-ink:#04121a; --ok:#2ecc71; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         padding:max(20px,env(safe-area-inset-top)) 18px max(20px,env(safe-area-inset-bottom)); }
+  h1 { font-size:20px; margin:0 0 4px; } .sub { color:var(--muted); font-size:14px; margin:0 0 20px; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:16px; padding:20px; max-width:520px; margin:0 auto; }
+  label { display:block; font-size:14px; color:var(--muted); margin:14px 0 6px; }
+  input[type=text] { width:100%; font-size:16px; padding:12px 14px; border-radius:12px; border:1px solid var(--edge);
+                     background:#0f1720; color:var(--fg); }
+  .row { display:flex; align-items:center; gap:10px; margin-top:14px; color:var(--muted); font-size:14px; }
+  button { width:100%; min-height:56px; font-size:19px; font-weight:700; border:none; border-radius:14px;
+           background:var(--accent); color:var(--accent-ink); margin-top:18px; cursor:pointer; }
+  button[disabled] { opacity:.5; }
+  .msg { margin-top:16px; font-size:15px; min-height:22px; }
+  .msg.ok { color:var(--ok); } .msg.err { color:var(--err); }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Pair this car</h1>
+    <p class="sub">Sends your access token &amp; key to the car that showed the QR. Nothing here is sent to the server in the clear.</p>
+
+    <div id="needSecrets" hidden>
+      <label for="tok">Access token (TOKEN)</label>
+      <input id="tok" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" />
+      <label for="key">Encryption key (KEY, base64url)</label>
+      <input id="key" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" inputmode="text" />
+      <div class="row"><input id="remember" type="checkbox" checked /><label for="remember" style="margin:0">Remember on this phone</label></div>
+    </div>
+
+    <button id="go" type="button">Pair car</button>
+    <p class="msg" id="msg" role="status"></p>
+  </div>
+
+<script>
+/*__INLINE_CRYPTO__*/
+</script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var msg = $("msg"), go = $("go");
+  function say(text, cls) { msg.textContent = text; msg.className = "msg" + (cls ? " " + cls : ""); }
+  function safeLS(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
+
+  var frag = new URLSearchParams(location.hash.slice(1));
+  var pairId = frag.get("id");
+  var wB64u = frag.get("w");
+
+  if (!pairId || !wB64u) {
+    say("This link is missing its pairing code. Re-scan the QR on the car.", "err");
+    go.disabled = true;
+    return;
+  }
+
+  // Secrets come from this phone's localStorage (set once by opening the phone
+  // bookmark). Allow the fragment to carry them too, as a convenience.
+  var token = frag.get("t") || safeLS(function () { return localStorage.getItem("ctc.token"); }, null);
+  var key = frag.get("k") || safeLS(function () { return localStorage.getItem("ctc.key"); }, null);
+
+  if (!token || !key) {
+    $("needSecrets").hidden = false;
+    if (token) $("tok").value = token;
+    if (key) $("key").value = key;
+    say("Paste your token and key, then tap Pair.");
+  }
+
+  go.onclick = function () {
+    var t = token, k = key;
+    if (!$("needSecrets").hidden) {
+      t = $("tok").value.trim(); k = $("key").value.trim();
+      if (!t || !k) { say("Enter both the token and the key.", "err"); return; }
+      if ($("remember").checked) {
+        safeLS(function () { localStorage.setItem("ctc.token", t); localStorage.setItem("ctc.key", k); });
+      }
+    }
+    go.disabled = true; say("Pairing…");
+    // Encrypt {t,k} under the optical key W (base64url from the fragment).
+    encryptJSON(wB64u, { t: t, k: k }).then(function (wire) {
+      return fetch("/pair/put", {
+        method: "POST", cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: pairId, iv: wire.iv, ct: wire.ct }),
+      });
+    }).then(function (res) {
+      if (!res.ok) throw new Error("server " + res.status);
+      say("Sent to the car ✓ — it should finish pairing now.", "ok");
+    }).catch(function (e) {
+      go.disabled = false;
+      say("Couldn't pair: " + (e && e.message ? e.message : "error") + ". Re-scan and try again.", "err");
+    });
+  };
+})();
+</script>
+</body>
+</html>

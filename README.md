@@ -1,2 +1,252 @@
 # clip-to-car
-A small project which helps me to copy text and send it to my Xpeng car
+
+A tiny personal tool to move text — first **addresses**, later **credentials** — from an
+iPhone to an **XPeng P7+** (China-spec) car screen, where no third-party apps can be
+installed. The car opens one bookmarked page in its built-in browser, the value appears with
+a big **Copy** button, and one tap puts it on the car's clipboard to paste into native
+navigation or an app's login fields.
+
+Everything is one **Cloudflare Worker** — it serves the pages *and* the JSON API, so there is
+a single deploy, one origin (no CORS), and a generous free tier. Storage is **Workers KV**.
+
+> Full design rationale lives in the build plan. This README is the operator's guide:
+> how to deploy it, provision the car, and use it.
+
+---
+
+## What's in the box
+
+| Phase | What | Status |
+|------|------|--------|
+| 1 | **Address hand-off** — phone → car, plaintext, persists | ✅ built & tested |
+| 1.5 | **QR pairing** — provision the car without typing secrets | ✅ built & tested (needs on-car check — Spike 2) |
+| 2 | **Map link → place** — parse a Yandex link to name + coords, offer nav | ✅ parsing built & tested; nav buttons **benchmark-gated** (Spike 3) |
+| 3 | **Encrypted credentials** — E2E-encrypted, single-use, TTL, auto-clear | ✅ built & tested |
+
+The server never sees credential plaintext, the encryption `KEY`, or the pairing key `W` — it
+only stores and returns ciphertext.
+
+---
+
+## Architecture
+
+```
+ iPhone                         Cloudflare Worker (one URL)              Car browser
+ ──────                         ───────────────────────────             ───────────
+ Address:  Shortcut ─POST /set──►  GET  /            car page  ◄──bookmark  polls /latest
+                                   POST /set   (auth)                       tap → Copy
+ Credential: /send page ─POST───►  GET  /latest (auth)
+   (encrypts in-browser)           POST /vault (auth)          ◄──bookmark  /vault-view
+                                   GET  /vault/peek  (auth)                 Reveal → claim
+                                   GET  /vault/claim (auth,1-use)          decrypt in-browser
+ Pairing:   /pair page ─POST────►  POST /pair/put            ◄── QR ── car shows QR
+                                   POST /pair/claim (1-use)               car decrypts W
+                                   KV: latest · vault · pair:<id>
+```
+
+Two independent secrets:
+
+- **`TOKEN`** — bearer auth. The server knows it. Sent as `Authorization: Bearer <TOKEN>`.
+  Keeps strangers out.
+- **`KEY`** — the AES-256 key for credentials (Phase 3). The server **never** sees it. Lives
+  only on the phone sender and the car; used purely for `crypto.subtle`.
+
+---
+
+## Repository layout
+
+```
+clip-to-car/
+  wrangler.toml          # Worker + KV config
+  build.mjs              # inlines shared helpers into pages -> src/generated/pages.js
+  src/
+    worker.js            # routing, auth, KV, handlers (the API)
+    crypto.js            # SINGLE source of the base64url + AES-GCM helpers (§8)
+    maplink.js           # pure Yandex map-link parser (§9.1)
+    qr.js                # vendored QR generator (MIT, no CDN)
+    pages/
+      car.html           # address/place view + QR pairing mode
+      vault.html         # car credential view  (served at /vault-view)
+      send.html          # phone credential sender (/send)
+      pair.html          # phone pairing page (/pair)
+      nav-benchmark.html # Spike 3 tool (/nav-benchmark)
+  test/                  # vitest (Workers pool): api, crypto, maplink
+```
+
+`src/crypto.js` is the single source of truth for the crypto helpers; `build.mjs` inlines it
+(and `qr.js`) into the pages so the exact same code runs on phone and car — no copy-paste.
+`src/generated/` is a build artifact (git-ignored); `wrangler deploy` and `npm test` rebuild it.
+
+---
+
+## Deploy
+
+```bash
+npm install
+npx wrangler login
+
+# 1. Create the KV namespace, then paste the printed id into wrangler.toml (id = "…")
+npx wrangler kv namespace create CLIPBOARD
+
+# 2. Set the auth token (generate a strong one)
+openssl rand -hex 16              # copy the output
+npx wrangler secret put TOKEN     # paste it when prompted
+
+# 3. Deploy (build.mjs runs automatically via [build] command)
+npm run deploy
+```
+
+Your Worker is now at `https://clip-to-car.<your-subdomain>.workers.dev`. Load it — you should
+see the car page (in pairing mode, since the car has no secret yet).
+
+### Generate the encryption KEY (Phase 3)
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='    # base64url, no padding
+```
+
+Keep `TOKEN` and `KEY` somewhere safe (a password manager). They are **not** stored in the repo.
+
+---
+
+## Bookmarks & provisioning
+
+Let `BASE = https://clip-to-car.<your-subdomain>.workers.dev`.
+
+| Where | Bookmark | Notes |
+|-------|----------|-------|
+| **Car — main** | `BASE/` | No secrets in the URL. On first open it shows a **QR**; scan it with the iPhone to pair (below). |
+| **Car — credentials** | `BASE/vault-view` | Reuses the paired secrets from the car's `localStorage`. |
+| **Phone — sender** | `BASE/send#t=TOKEN&k=KEY` | First open remembers the secrets on the phone (so `/pair` can reuse them). |
+| **Phone — pairing** | opened from the QR, not bookmarked | The QR encodes `BASE/pair#id=…&w=…`. |
+
+**Fallback (no pairing):** if pairing isn't usable on the car, bookmark
+`BASE/#t=TOKEN&k=KEY` (address view) and `BASE/vault-view#t=TOKEN&k=KEY` directly. The page
+reads the secrets from the `#…` fragment (never sent to the server), stores them, and strips
+them from the visible address bar.
+
+### Pairing the car (the car shows, the phone scans)
+
+The car browser can't scan, but it can display, and the iPhone camera scans natively — so the
+direction is reversed:
+
+1. Open `BASE/` on the car. With no stored secret it shows a QR encoding `BASE/pair#id=…&w=…`.
+   `w` is a fresh one-time key generated by the car; it rides in the **fragment**, so it goes
+   phone-side optically and **never touches the network**.
+2. Point the iPhone camera at the car screen and tap the link. The `/pair` page opens.
+3. `/pair` loads `TOKEN`+`KEY` from the phone's `localStorage` (or asks you to paste them once),
+   encrypts `{t,k}` under `w`, and POSTs only ciphertext to the Worker.
+4. The car's next poll claims that ciphertext (single-use), decrypts it with the `w` it kept,
+   stores `TOKEN`+`KEY` locally, and switches to the address view.
+
+The server only ever holds `{iv,ct}` for `pair:<id>` — never `w`, `TOKEN`, or `KEY`. Clearing
+the car browser's data de-authorizes the car (you just re-pair).
+
+---
+
+## iOS Shortcut for addresses (Phase 1)
+
+Addresses stay plaintext and use a Shortcut (fast, no page to open):
+
+1. **Shortcuts → +** → add **Get Clipboard**.
+2. Add **Get Contents of URL**:
+   - URL: `BASE/set`
+   - Method: **POST**
+   - Headers: `Authorization` = `Bearer YOUR_TOKEN`, `Content-Type` = `application/json`
+   - Request Body: **JSON** → key `text`, value = the **Clipboard** variable.
+3. (Optional) add **Show Result** to confirm `{"ok":true}`.
+4. Rename it (e.g. "To Car"), add to the Home Screen / Share Sheet, or trigger with Siri.
+
+Copy an address anywhere → run the Shortcut → it appears on the car within ~3s.
+
+> Credentials do **not** go through this Shortcut — iOS Shortcuts can't do AES-GCM. Use the
+> `/send` page, which encrypts in Safari's `crypto.subtle`.
+
+---
+
+## curl smoke tests
+
+```bash
+BASE=https://clip-to-car.<your-subdomain>.workers.dev
+TOKEN=your-token
+
+# auth is enforced (expect 401)
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE/latest"
+
+# address round-trip
+curl -s -X POST "$BASE/set" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"text":"Republic Square, Yerevan"}'
+curl -s "$BASE/latest" -H "Authorization: Bearer $TOKEN"; echo
+
+# map link -> place enrichment
+curl -s -X POST "$BASE/set" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"https://yandex.com/maps/?ll=44.512600,40.177200&z=17&text=Republic%20Square"}'
+curl -s "$BASE/latest" -H "Authorization: Bearer $TOKEN"; echo   # -> kind":"place", lat, lon
+
+# vault (dummy ciphertext) — post, peek, claim once, claim again
+curl -s -X POST "$BASE/vault" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"v":1,"iv":"aXY","ct":"Y3Q"}'
+curl -s "$BASE/vault/peek"  -H "Authorization: Bearer $TOKEN"; echo   # present:true
+curl -s "$BASE/vault/claim" -H "Authorization: Bearer $TOKEN"; echo   # returns it
+curl -s "$BASE/vault/claim" -H "Authorization: Bearer $TOKEN"; echo   # present:false (single-use)
+```
+
+---
+
+## Configuration knobs
+
+- **Server** (`src/worker.js`, top of file): `DEFAULT_VAULT_TTL_SECONDS` (120),
+  `DEFAULT_PAIR_TTL_SECONDS` (120), `MAX_BODY_BYTES`, `SHORT_LINK_TIMEOUT_MS`.
+  Override the TTLs without editing code via `wrangler.toml` `[vars]`
+  `VAULT_TTL_SECONDS` / `PAIR_TTL_SECONDS`.
+- **Car page** (`src/pages/car.html`): `POLL_MS` (3000), `PAIR_POLL_MS`, `NAV_SCHEMES`.
+- **Car vault view** (`src/pages/vault.html`): `PEEK_POLL_MS`, `CLEAR_MS` (clipboard auto-clear, 20s).
+
+---
+
+## Security model (summary)
+
+- Every API route except the pages requires `Authorization: Bearer <TOKEN>`.
+- Credentials are AES-256-GCM encrypted **in the browser** on the phone and decrypted **in the
+  browser** on the car. The Worker stores/returns only `{v,iv,ct}`; it performs no crypto.
+- No secret or user value is ever put in a URL query/path — POST bodies and the `Authorization`
+  header only. Fragments (`#…`) are client-only and never sent to the server.
+- All responses are `Cache-Control: no-store`.
+- Credentials are single-use (deleted on claim) + TTL-bound in KV + clipboard auto-clears a few
+  seconds after paste.
+
+**Accepted risks:** anyone with physical access to the car while a value is on-screen, or with
+the car's stored secrets, can see it. The car is a semi-shared device — don't send anything you
+wouldn't want a passenger to glimpse. Addresses are plaintext (low sensitivity).
+
+---
+
+## Tests
+
+```bash
+npm test        # builds, then runs vitest in the Cloudflare Workers pool
+```
+
+Covers: auth on/off, `/set` validation + map-link enrichment, `/latest` shape, vault
+post/peek/claim single-use, pairing put/claim single-use, and the crypto wire format
+(round-trip, wrong-key failure, tamper detection, fresh IV, phone↔car interop).
+
+---
+
+## On-car checklist (spikes to verify — I can't run these for you)
+
+These need the physical car; the software is ready for them.
+
+- [ ] **Spike 1 — clipboard survives an app switch.** *(Plan says already confirmed.)* Copy on
+      the car page → switch to a native app → paste works.
+- [ ] **Spike 2 — car storage + crypto.** Confirm the car browser keeps `localStorage` across
+      sessions and exposes `crypto.subtle`. If `localStorage` doesn't persist, you'll re-pair
+      each session (still works, just less convenient).
+- [ ] **Spike 3 — nav launch (gates Phase 2 buttons).** Open `BASE/nav-benchmark` on the car,
+      tap each candidate, and record what opens and whether the pin is correct (compare AMap
+      `dev=0` vs `dev=1`; check whether AMap even has Armenia data). Then enable the schemes that
+      worked by uncommenting them in `NAV_SCHEMES` in `src/pages/car.html` and redeploying.
+      Until then the car shows the place **name + coordinates + Copy** plus the Yandex **web**
+      route (which always opens in the browser).
+```
