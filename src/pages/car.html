@@ -36,6 +36,7 @@
   .qrwrap { display:flex; flex-direction:column; align-items:center; gap:16px; }
   .qr { width:min(60vw,320px); background:#fff; padding:14px; border-radius:16px; }
   .qr svg { display:block; width:100%; height:auto; }
+  .paircode { font-size:20px; font-weight:700; letter-spacing:.18em; text-align:center; margin:0; }
   :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
   [hidden] { display:none !important; }
   @media (prefers-reduced-motion:reduce){ .btn:active{transform:none} .dot{transition:none} }
@@ -65,7 +66,9 @@
       <div class="card qrwrap">
         <p class="label" style="text-align:center">Scan with your iPhone camera to pair this car</p>
         <div class="qr" id="qr" aria-label="Pairing QR code"></div>
+        <p class="paircode" id="pairCode"></p>
         <p class="muted" id="pairMsg" style="text-align:center">Point the camera at this code, then tap the link.</p>
+        <p class="muted" id="pairStatus" style="text-align:center">Starting…</p>
       </div>
     </section>
 
@@ -248,6 +251,25 @@
   }
 
   // --- QR pairing (§5.1) ------------------------------------------------------
+  // A pending pairing is kept in sessionStorage so that RELOADING the car page
+  // does not mint a new pairId and silently orphan a QR the phone already
+  // scanned (the phone would post to the old id forever). Cleared once paired.
+  var PAIR_SESSION_KEY = "ctc.pair";
+  var PAIR_SESSION_MAX_AGE_MS = 10 * 60 * 1000;
+
+  function loadPairSession() {
+    try {
+      var s = JSON.parse(sessionStorage.getItem(PAIR_SESSION_KEY) || "null");
+      if (!s || !s.id || !s.w) return null;
+      if (Date.now() - (s.ts || 0) > PAIR_SESSION_MAX_AGE_MS) return null;
+      return s;
+    } catch (e) { return null; }
+  }
+  function savePairSession(id, w) {
+    try { sessionStorage.setItem(PAIR_SESSION_KEY, JSON.stringify({ id: id, w: w, ts: Date.now() })); } catch (e) {}
+  }
+  function clearPairSession() { try { sessionStorage.removeItem(PAIR_SESSION_KEY); } catch (e) {} }
+
   function startPairing() {
     $("pairing").hidden = false;
     setDot(""); setStatus("Pairing");
@@ -255,35 +277,56 @@
   }
 
   function beginPairAttempt(fails) {
-    var pairId = b64uEncode(randomBytes(16)); // 22-char base64url id
-    var wBytes = randomBytes(32);             // optical wrapping key W (never sent)
-    var phoneUrl = location.origin + "/pair#id=" + pairId + "&w=" + b64uEncode(wBytes);
+    var sess = loadPairSession();
+    var pairId, wB64u;
+    if (sess) {
+      pairId = sess.id; wB64u = sess.w;      // resume after a reload
+    } else {
+      pairId = b64uEncode(randomBytes(16));  // 22-char base64url id
+      wB64u = b64uEncode(randomBytes(32));   // optical wrapping key W (never sent)
+      savePairSession(pairId, wB64u);
+    }
+    var wBytes = b64uDecode(wB64u);
+    var phoneUrl = location.origin + "/pair#id=" + pairId + "&w=" + wB64u;
     try { $("qr").innerHTML = makeQrSvg(phoneUrl, 8); }
     catch (e) { showFallback(); return; }
-    pollPairClaim(pairId, wBytes, fails);
+    // Short code so the phone and car can be confirmed to be on the same
+    // handshake at a glance — a mismatch means the QR is stale, rescan.
+    $("pairCode").textContent = pairId.slice(0, 6);
+    pollPairClaim(pairId, wBytes, fails, 0);
   }
 
-  function pollPairClaim(pairId, wBytes, fails) {
+  function pollPairClaim(pairId, wBytes, fails, attempts) {
     fetch("/pair/claim", {
       method: "POST", cache: "no-store",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: pairId }),
     }).then(function (r) { return r.json(); }).then(function (data) {
-      if (!data.present) { setTimeout(function () { pollPairClaim(pairId, wBytes, fails); }, PAIR_POLL_MS); return; }
+      if (!data.present) {
+        // Visible heartbeat: silent retries made a stale QR undiagnosable.
+        $("pairStatus").textContent = "Waiting for phone… (" + (attempts + 1) + ")";
+        setTimeout(function () { pollPairClaim(pairId, wBytes, fails, attempts + 1); }, PAIR_POLL_MS);
+        return;
+      }
+      $("pairStatus").textContent = "Received — decrypting…";
       decryptJSON(wBytes, data.iv, data.ct).then(function (secrets) {
         if (!secrets || !secrets.t) throw new Error("no token");
         safeLS(function () { localStorage.setItem("ctc.token", secrets.t); });
         if (secrets.k) safeLS(function () { localStorage.setItem("ctc.key", secrets.k); });
+        clearPairSession();
         $("pairMsg").textContent = "Paired ✓";
+        $("pairStatus").textContent = "";
         setTimeout(function () { location.reload(); }, 500);
       }).catch(function () {
         // Slot was consumed but decrypt failed — regenerate and ask to rescan.
+        clearPairSession();
         var next = fails + 1;
         $("pairMsg").textContent = "Pairing failed — rescan the new code.";
         beginPairAttempt(next >= PAIR_MAX_FAILS ? 0 : next);
       });
     }).catch(function () {
-      setTimeout(function () { pollPairClaim(pairId, wBytes, fails); }, PAIR_POLL_MS);
+      $("pairStatus").textContent = "Can't reach the server — retrying…";
+      setTimeout(function () { pollPairClaim(pairId, wBytes, fails, attempts + 1); }, PAIR_POLL_MS);
     });
   }
 
