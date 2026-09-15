@@ -96,6 +96,17 @@ describe("address flow (§6)", () => {
     expect(res.status).toBe(400);
   });
 
+  it("enriches a real Yandex share (label + coords + short link) with no network", async () => {
+    const shared = "Կետը քարտեզի վրա 40.204753,44.542365 https://yandex.ru/maps/-/CTxeFV-J";
+    await postJSON("/set", { text: shared }, authHeaders);
+    const data = await (await req("/latest", { headers: authHeaders })).json();
+    expect(data.kind).toBe("place");
+    expect(data.lat).toBeCloseTo(40.204753, 6);
+    expect(data.lon).toBeCloseTo(44.542365, 6);
+    expect(data.name).toBe("Կետը քարտեզի վրա");
+    expect(data.text).toBe(shared); // original preserved for Copy / Open link
+  });
+
   it("enriches a full Yandex map link into a place (no network needed)", async () => {
     await postJSON("/set", { text: "https://yandex.com/maps/?ll=44.512600,40.177200&z=17&text=Republic%20Square" }, authHeaders);
     const data = await (await req("/latest", { headers: authHeaders })).json();

@@ -14,7 +14,14 @@ import {
   VAULT_HTML,
   NAV_BENCHMARK_HTML,
 } from "./generated/pages.js";
-import { looksLikeMapLink, isShortMapLink, parseMapLink } from "./maplink.js";
+import {
+  looksLikeMapLink,
+  isShortMapLink,
+  parseMapLink,
+  extractUrl,
+  parseBareCoords,
+  labelFromText,
+} from "./maplink.js";
 import { ClipStore } from "./store.js";
 
 // The Durable Object class must be exported from the Worker entrypoint so the
@@ -132,22 +139,42 @@ async function expandShortLink(shortUrl) {
   }
 }
 
+function assignPlace(record, place) {
+  record.kind = place.kind;
+  record.name = place.name;
+  record.lat = place.lat;
+  record.lon = place.lon;
+  record.source = place.source;
+}
+
 async function buildLatestRecord(text) {
   const record = { text, ts: Date.now() };
-  if (!looksLikeMapLink(text)) return record;
-  let toParse = text;
-  if (isShortMapLink(text)) {
-    const expanded = await expandShortLink(text);
+
+  // 1. Coordinates written directly in the shared text. Preferred: it is exact
+  //    and needs no network round-trip to resolve a short link.
+  const bare = parseBareCoords(text);
+  if (bare) {
+    assignPlace(record, {
+      kind: "place",
+      name: labelFromText(text),
+      lat: bare.lat,
+      lon: bare.lon,
+      source: "shared text",
+    });
+    return record;
+  }
+
+  // 2. Otherwise look for a map URL anywhere in the text (a share is rarely a
+  //    bare URL), expanding a short link when needed.
+  const url = extractUrl(text) || text;
+  if (!looksLikeMapLink(url)) return record;
+  let toParse = url;
+  if (isShortMapLink(url)) {
+    const expanded = await expandShortLink(url);
     if (expanded) toParse = expanded;
   }
   const place = parseMapLink(toParse);
-  if (place) {
-    record.kind = place.kind;
-    record.name = place.name;
-    record.lat = place.lat;
-    record.lon = place.lon;
-    record.source = place.source;
-  }
+  if (place) assignPlace(record, place);
   return record;
 }
 

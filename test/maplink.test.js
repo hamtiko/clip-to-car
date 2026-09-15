@@ -1,5 +1,45 @@
 import { describe, it, expect } from "vitest";
-import { looksLikeMapLink, isShortMapLink, parseMapLink } from "../src/maplink.js";
+import {
+  looksLikeMapLink,
+  isShortMapLink,
+  parseMapLink,
+  extractUrl,
+  parseBareCoords,
+  labelFromText,
+} from "../src/maplink.js";
+
+// The exact string Yandex Maps puts on the share sheet for a dropped pin.
+const YANDEX_SHARE = "Կետը քարտեզի վրա 40.204753,44.542365 https://yandex.ru/maps/-/CTxeFV-J";
+
+describe("free-text shares", () => {
+  it("pulls lat,lon out of a real Yandex share", () => {
+    const c = parseBareCoords(YANDEX_SHARE);
+    // Yerevan is ~40.2N 44.5E — latitude FIRST in share text, unlike ll=/pt=.
+    expect(c.lat).toBeCloseTo(40.204753, 6);
+    expect(c.lon).toBeCloseTo(44.542365, 6);
+  });
+
+  it("does not mistake ordinary prose for coordinates", () => {
+    expect(parseBareCoords("Apt 12, 34 Main St")).toBeNull();
+    expect(parseBareCoords("costs 1.5, 2.5 dollars")).toBeNull(); // too few decimals
+    expect(parseBareCoords("no numbers here")).toBeNull();
+  });
+
+  it("rejects out-of-range pairs", () => {
+    expect(parseBareCoords("200.1234,44.5678")).toBeNull();
+  });
+
+  it("extracts an embedded URL and trims trailing punctuation", () => {
+    expect(extractUrl(YANDEX_SHARE)).toBe("https://yandex.ru/maps/-/CTxeFV-J");
+    expect(extractUrl("see https://example.com/a.")).toBe("https://example.com/a");
+    expect(extractUrl("no url here")).toBeNull();
+  });
+
+  it("recovers the human label from the share", () => {
+    expect(labelFromText(YANDEX_SHARE)).toBe("Կետը քարտեզի վրա");
+    expect(labelFromText("https://yandex.ru/maps/-/CTxeFV-J")).toBeNull();
+  });
+});
 
 describe("looksLikeMapLink", () => {
   it("recognizes Yandex Maps links", () => {

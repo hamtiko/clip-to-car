@@ -76,3 +76,50 @@ export function parseMapLink(text) {
     source: url.hostname,
   };
 }
+
+// --- free-text shares -------------------------------------------------------
+// Real shares are not bare URLs. Yandex's "point on the map" share looks like:
+//   "Կետը քարտեզի վրա 40.204753,44.542365 https://yandex.ru/maps/-/CTxeFV-J"
+// i.e. a label, a coordinate pair, and a short link, in one string.
+
+// First http(s) URL embedded anywhere in the text (trailing punctuation trimmed).
+export function extractUrl(text) {
+  if (typeof text !== "string") return null;
+  const m = text.match(/https?:\/\/[^\s<>"']+/);
+  return m ? m[0].replace(/[.,;:!?)\]]+$/, "") : null;
+}
+
+// A bare "lat,lon" pair inside free text.
+//
+// NOTE THE ORDER: plain-text coordinate pairs are lat,lon (the usual geographic
+// convention, and what Yandex puts in its share text), whereas Yandex URL
+// params ll=/pt=/whatshere[point]= are lon,lat. Do not unify these.
+//
+// At least three decimal places are required so ordinary prose with two
+// comma-separated numbers ("Apt 12, 34") cannot be mistaken for a location.
+export function parseBareCoords(text) {
+  if (typeof text !== "string") return null;
+  // Strip URLs first. Coordinates inside a Yandex URL are lon,lat and belong to
+  // parseMapLink; reading them here as lat,lon silently swaps them.
+  const prose = text.replace(/https?:\/\/[^\s<>"']+/g, " ");
+  // The digit guards stop "200.1234" from matching as "00.1234".
+  const m = prose.match(/(?<![\d.])(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})(?![\d.])/);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lon = Number(m[2]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+// Whatever is left once the coordinates and the URL are removed — the human
+// label Yandex prefixes to the share. Null when nothing meaningful remains.
+export function labelFromText(text) {
+  if (typeof text !== "string") return null;
+  const rest = text
+    .replace(/https?:\/\/[^\s<>"']+/g, " ")
+    .replace(/(-?\d{1,2}\.\d{3,})\s*,\s*(-?\d{1,3}\.\d{3,})/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return rest || null;
+}

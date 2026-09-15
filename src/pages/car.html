@@ -32,6 +32,8 @@
   .btnrow { display:flex; flex-direction:column; gap:10px; margin-top:16px; }
   .navbtn { display:flex; align-items:center; justify-content:center; min-height:54px; font-size:18px; font-weight:600;
             border-radius:14px; border:1px solid var(--edge); background:#0f1720; color:var(--fg); text-decoration:none; }
+  a.btn { text-decoration:none; }
+  .inlink { color:var(--accent); word-break:break-all; }
   .muted { color:var(--muted); } .hint { font-size:14px; color:var(--muted); margin-top:14px; text-align:center; }
   .qrwrap { display:flex; flex-direction:column; align-items:center; gap:16px; }
   .qr { width:min(60vw,320px); background:#fff; padding:14px; border-radius:16px; }
@@ -183,11 +185,18 @@
   }
 
   function renderAddress(data, valueWrap, actions) {
-    $("cardLabel").textContent = "Address";
+    var link = firstUrl(data.text);
+    $("cardLabel").textContent = link ? "Link" : "Address";
     var v = document.createElement("div");
-    v.className = "value"; v.textContent = data.text;
-    valueWrap.innerHTML = ""; valueWrap.appendChild(v);
-    var copy = mkBtn("Copy", "btn");
+    v.className = "value";
+    valueWrap.textContent = "";
+    if (link) { renderTextWithLinks(v, data.text); } else { v.textContent = data.text; }
+    valueWrap.appendChild(v);
+
+    // With a link, opening it is the useful action (a raw URL is not something
+    // you can paste into the nav search). Copy stays as the fallback.
+    if (link) actions.appendChild(mkLinkBtn("Open link", link, "btn"));
+    var copy = mkBtn("Copy", link ? "btn secondary" : "btn");
     copy.onclick = function () { copyText(data.text, copy); };
     actions.appendChild(copy);
   }
@@ -211,6 +220,9 @@
       actions.appendChild(copyName);
     }
 
+    var original = firstUrl(data.text);
+    if (original) actions.appendChild(mkLinkBtn("Open original link", original, "navbtn"));
+
     NAV_SCHEMES.forEach(function (scheme) {
       var a = document.createElement("a");
       a.className = "navbtn";
@@ -222,6 +234,44 @@
   }
 
   function mkBtn(label, cls) { var b = document.createElement("button"); b.className = cls; b.type = "button"; b.textContent = label; return b; }
+
+  // An <a> styled as a button. Same-tab navigation so the car's Back button
+  // returns to this page.
+  function mkLinkBtn(label, href, cls) {
+    var a = document.createElement("a");
+    a.className = cls; a.textContent = label; a.href = href; a.rel = "noopener";
+    return a;
+  }
+
+  // Shared text often arrives as "Place name\nAddress\nhttps://…", so scan for
+  // a URL rather than assuming the whole value is one. http/https only — never
+  // build a link from any other scheme.
+  var URL_RE = /https?:\/\/[^\s<>"']+/g;
+  function trimTrailing(url) { return url.replace(/[.,;:!?)\]]+$/, ""); }
+
+  function firstUrl(text) {
+    if (typeof text !== "string") return null;
+    URL_RE.lastIndex = 0;
+    var m = URL_RE.exec(text);
+    return m ? trimTrailing(m[0]) : null;
+  }
+
+  // Render free text, turning any URLs into real anchors. Built from text nodes
+  // and createElement (never innerHTML) so the value can't inject markup.
+  function renderTextWithLinks(container, text) {
+    container.textContent = "";
+    URL_RE.lastIndex = 0;
+    var last = 0, m;
+    while ((m = URL_RE.exec(text)) !== null) {
+      if (m.index > last) container.appendChild(document.createTextNode(text.slice(last, m.index)));
+      var url = trimTrailing(m[0]);
+      var a = document.createElement("a");
+      a.className = "inlink"; a.href = url; a.textContent = url; a.rel = "noopener";
+      container.appendChild(a);
+      last = m.index + url.length;
+    }
+    if (last < text.length) container.appendChild(document.createTextNode(text.slice(last)));
+  }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
 
   // --- polling loop -----------------------------------------------------------
