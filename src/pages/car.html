@@ -254,6 +254,13 @@
     sum.textContent = "Try all nav schemes (" + NAV_SCHEMES.length + ")";
     box.appendChild(sum);
 
+    if (data.source) {
+      var src = document.createElement("p");
+      src.className = "tnote";
+      src.textContent = "Coordinates from: " + data.source;
+      box.appendChild(src);
+    }
+
     var hint = document.createElement("p");
     hint.className = "tnote";
     hint.textContent = "Tap each one and note what happens. An https link always opens the " +

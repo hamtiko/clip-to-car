@@ -38,7 +38,10 @@ const DEFAULT_VAULT_TTL_SECONDS = 120; // credential lifetime in KV
 const DEFAULT_PAIR_TTL_SECONDS = 120; // pairing-slot lifetime in KV
 const MAX_BODY_BYTES = 8192; // reject oversized POST bodies (§6 validation)
 const SHORT_LINK_TIMEOUT_MS = 6000; // cap on the map short-link redirect fetch
-const MAX_HTML_SCAN = 400000; // how much of a fetched map page to scan for coords
+// How much of a fetched map page to scan. A real Yandex org page hit a 400k
+// cap exactly, so this is well above it — the body is already fully read, so a
+// larger window costs regex time, not bandwidth.
+const MAX_HTML_SCAN = 1500000;
 const PAIR_ID_RE = /^[A-Za-z0-9_-]{22}$/; // 16 random bytes as base64url (no pad)
 const B64U_RE = /^[A-Za-z0-9_-]+$/;
 

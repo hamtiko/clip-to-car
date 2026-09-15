@@ -106,6 +106,15 @@ describe("coordinates from a fetched map page", () => {
       .toMatchObject({ lat: LAT, lon: LON, via: "longitude/latitude" });
   });
 
+  it("reads data-coordinates as lon,lat (real Yandex org page)", () => {
+    // Verbatim from a live /maps/org/ page via POST /resolve. Yerevan, so
+    // 44.49 is the longitude and 40.20 the latitude — attribute order is lon,lat.
+    const html = 'aWQ9OTQ2Mzc0NTE3MTI=" data-coordinates="44.498490,40.200207"><meta itemProp="image"';
+    expect(parseCoordsFromHtml(html)).toMatchObject({
+      lat: 40.200207, lon: 44.498490, via: "data-coordinates",
+    });
+  });
+
   it("reads a Yandex ll= as lon,lat", () => {
     expect(parseCoordsFromHtml('<img src="https://s/?ll=44.5152,40.1914&z=17">'))
       .toMatchObject({ lat: LAT, lon: LON, via: "ll=" });

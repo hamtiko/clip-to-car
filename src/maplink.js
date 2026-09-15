@@ -154,7 +154,16 @@ export function parseCoordsFromHtml(html) {
     if (p) return { ...p, via: "longitude/latitude" };
   }
 
-  // 2. A Yandex ll= anywhere in the markup (e.g. a static-map image URL).
+  // 2. Yandex org/place pages carry the point in a data-coordinates attribute,
+  //    in Yandex's usual lon,lat order. CONFIRMED against a live org page:
+  //    data-coordinates="44.498490,40.200207" is lon=44.49, lat=40.20 (Yerevan).
+  m = html.match(/data-coordinates\s*=\s*["'](-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)["']/);
+  if (m) {
+    const p = validPair(Number(m[2]), Number(m[1]));
+    if (p) return { ...p, via: "data-coordinates" };
+  }
+
+  // 3. A Yandex ll= anywhere in the markup (e.g. a static-map image URL).
   //    Yandex ll is lon,lat.
   m = html.match(/[?&]ll=(-?\d{1,3}\.\d+)(?:,|%2C)(-?\d{1,2}\.\d+)/i);
   if (m) {
@@ -162,14 +171,14 @@ export function parseCoordsFromHtml(html) {
     if (p) return { ...p, via: "ll=" };
   }
 
-  // 3. GeoJSON-style "coordinates":[lon,lat] — GeoJSON is lon,lat.
+  // 4. GeoJSON-style "coordinates":[lon,lat] — GeoJSON is lon,lat.
   m = html.match(/"coordinates"\s*:\s*\[\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)\s*\]/);
   if (m) {
     const p = validPair(Number(m[2]), Number(m[1]));
     if (p) return { ...p, via: "coordinates[]" };
   }
 
-  // 4. <meta name="geo.position" content="lat;lon"> — lat first by spec.
+  // 5. <meta name="geo.position" content="lat;lon"> — lat first by spec.
   m = html.match(/geo\.position["'\s][^>]*content=["'](-?\d{1,2}\.\d+)\s*;\s*(-?\d{1,3}\.\d+)/i);
   if (m) {
     const p = validPair(Number(m[1]), Number(m[2]));
