@@ -19,10 +19,10 @@ a single deploy, one origin (no CORS), and a generous free tier. Storage is a si
 
 | Phase | What | Status |
 |------|------|--------|
-| 1 | **Address hand-off** — phone → car, plaintext, persists | ✅ built & tested |
-| 1.5 | **QR pairing** — provision the car without typing secrets | ✅ built & tested (needs on-car check — Spike 2) |
-| 2 | **Map link → place** — parse a Yandex link to name + coords, offer nav | ✅ parsing built & tested; nav buttons **benchmark-gated** (Spike 3) |
-| 3 | **Encrypted credentials** — E2E-encrypted, single-use, TTL, auto-clear | ✅ built & tested |
+| 1 | **Address hand-off** — phone → car, plaintext, persists | ✅ **live on the car** |
+| 1.5 | **QR pairing** — provision the car without typing secrets | ✅ **live on the car** |
+| 2 | **Map link → place** — resolve a Yandex share to name + coords, offer nav | ✅ **live on the car**; one-tap navigation still open (below) |
+| 3 | **Encrypted credentials** — E2E-encrypted, single-use, TTL, auto-clear | ✅ built & tested, **not yet exercised live** |
 
 The server never sees credential plaintext, the encryption `KEY`, or the pairing key `W` — it
 only stores and returns ciphertext.
@@ -323,19 +323,35 @@ post/peek/claim single-use, pairing put/claim single-use, and the crypto wire fo
 
 ---
 
-## On-car checklist (spikes to verify — I can't run these for you)
+## On-car results
 
-These need the physical car; the software is ready for them.
+Verified on the actual XPeng P7+ (Xmart OS):
 
-- [ ] **Spike 1 — clipboard survives an app switch.** *(Plan says already confirmed.)* Copy on
-      the car page → switch to a native app → paste works.
-- [ ] **Spike 2 — car storage + crypto.** Confirm the car browser keeps `localStorage` across
-      sessions and exposes `crypto.subtle`. If `localStorage` doesn't persist, you'll re-pair
-      each session (still works, just less convenient).
-- [ ] **Spike 3 — nav launch (gates Phase 2 buttons).** Open `BASE/nav-benchmark` on the car,
-      tap each candidate, and record what opens and whether the pin is correct (compare AMap
-      `dev=0` vs `dev=1`; check whether AMap even has Armenia data). Then enable the schemes that
-      worked by uncommenting them in `NAV_SCHEMES` in `src/pages/car.html` and redeploying.
-      Until then the car shows the place **name + coordinates + Copy** plus the Yandex **web**
-      route (which always opens in the browser).
+- ✅ **Spike 1 — clipboard survives an app switch.** Copy on the car page, switch to a native
+  app, paste works. This was the gate for the whole paste model.
+- ✅ **Spike 2 — car storage + crypto.** The car pairs by QR and stays paired, so
+  `localStorage` persists and `crypto.subtle` is available.
+- 🟡 **Spike 3 — nav launch.** Partially answered; see below.
+
+### Nav launch: what the car does
+
+Recorded per-scheme as `status` in `src/navschemes.js`, so results live in the repo rather
+than in memory. Schemes marked `works` are promoted to real buttons automatically.
+
+| Mechanism | Result |
+|---|---|
+| `geo:` and `intent://…scheme=geo` | ✅ Opens a map at the point — but you must still tap **Get directions** |
+| `yandexnavi://build_route_on_map` | 🟡 **Opens Yandex Navigator** but does not start routing |
+| AMap (`androidamap`/`amapuri`, both packages) | ❌ Nothing — this car does not appear to run AMap |
+| Yandex web route | ✅ Always opens (in the browser, by definition) |
+
+**Notably, Yandex Navigator IS installed** — the plan assumed it could not be on a China-spec
+car. That makes it the best target for Armenia.
+
+**Still open: navigation that starts without a second tap.** `geo:` only asks a map app to
+*display* a point. The untested candidates aimed at this are numbered in the UI: Yandex
+Navigator via `intent://` (a bare custom scheme appears to drop its query, which would explain
+the app opening without routing), and `google.navigation:`, Android's standard request to start
+turn-by-turn. Open `BASE/nav-benchmark` on the car, or expand **Try all nav schemes** under any
+place, and tap the numbered entries.
 ```
