@@ -5,3 +5,4 @@ src/generated/
 .dev.vars
 *.log
 .DS_Store
+.secrets.txt

@@ -27,7 +27,7 @@ command = "node build.mjs"
 # Create it with `wrangler kv namespace create CLIPBOARD` and paste the id here.
 [[kv_namespaces]]
 binding = "CLIPBOARD"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
+id = "e63e906a270a473aba3dedbc5d58bc07"
 
 # TOKEN (the bearer auth secret) is NOT stored here. Set it as a secret:
 #   npx wrangler secret put TOKEN
