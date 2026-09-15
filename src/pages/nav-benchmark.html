@@ -53,8 +53,9 @@
   var $ = function (id) { return document.getElementById(id); };
   function enc(s) { return encodeURIComponent(s); }
 
-  // Candidate launch mechanisms (§9.1/§12). yandexnavi/yandexmaps are expected
-  // to FAIL on a China-spec car (apps not installed) — kept here to confirm.
+  // Candidate launch mechanisms (§9.1/§12), with per-scheme results recorded as
+  // `status` in src/navschemes.js. Note the plan's assumption that Yandex apps
+  // cannot be installed on a China-spec car proved WRONG — Navigator is present.
   var SCHEMES = NAV_SCHEMES; // shared catalogue, inlined above
 
   function rebuild() {

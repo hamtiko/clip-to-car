@@ -6,9 +6,8 @@
 # Setup (see README.md §Deploy):
 #   1. npm install
 #   2. npx wrangler login
-#   3. npx wrangler kv namespace create CLIPBOARD   # paste the id below
-#   4. npx wrangler secret put TOKEN                # generate: openssl rand -hex 16
-#   5. npm run deploy
+#   3. npx wrangler secret put TOKEN                # generate: openssl rand -hex 16
+#   4. npm run deploy
 
 name = "clip-to-car"
 main = "src/worker.js"
@@ -21,13 +20,6 @@ compatibility_flags = ["nodejs_compat"]
 # Wrangler runs this before bundling on every `deploy` / `dev`.
 [build]
 command = "node build.mjs"
-
-# Legacy KV namespace. State now lives in the Durable Object below; this
-# binding is retained only so a rollback to the KV implementation is a one-line
-# change. Nothing in the Worker reads or writes it — safe to delete later.
-[[kv_namespaces]]
-binding = "CLIPBOARD"
-id = "e63e906a270a473aba3dedbc5d58bc07"
 
 # Durable Object holding all state (address, vault, pairing slots). KV is
 # eventually consistent, which made cross-device read-after-write take tens of

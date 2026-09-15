@@ -58,13 +58,14 @@ Two independent secrets:
 
 ```
 clip-to-car/
-  wrangler.toml          # Worker + KV config
+  wrangler.toml          # Worker, Durable Object binding + migration
   build.mjs              # inlines shared helpers into pages -> src/generated/pages.js
   src/
     worker.js            # routing, auth, handlers (the API)
     store.js             # ClipStore Durable Object — all persisted state
     crypto.js            # SINGLE source of the base64url + AES-GCM helpers (§8)
-    maplink.js           # pure Yandex map-link parser (§9.1)
+    maplink.js           # Yandex share/link parsing -> coordinates (§9.1)
+    navschemes.js        # nav deep-link catalogue + on-car results
     qr.js                # vendored QR generator (MIT, no CDN)
     pages/
       car.html           # address/place view + QR pairing mode
@@ -87,7 +88,8 @@ clip-to-car/
   - npm **11+** recommended — npm 10 has an arborist bug that crashes on Vitest 4's peer graph
     (`Cannot read properties of null (reading 'edgesOut')`). If you hit it, run the install with
     `npx npm@11 install`.
-- **git**, and a **Cloudflare account** (free tier is plenty: Workers 100k req/day + KV free tier).
+- **git**, and a **Cloudflare account** (the free plan is enough: Workers 100k req/day, and
+  SQLite-backed Durable Objects are free-plan eligible).
 - A **browser** on the machine — `wrangler login` approves via OAuth in the browser.
 
 Wrangler is a devDependency (run via `npx wrangler`) — no global install needed. macOS, Linux and
@@ -99,15 +101,12 @@ Windows all work.
 npm install
 npx wrangler login
 
-# 1. Create the KV namespace, then paste the printed id into wrangler.toml (id = "…")
-#    (legacy binding, kept only for rollback — the Worker no longer reads it)
-npx wrangler kv namespace create CLIPBOARD
-
-# 2. Set the auth token (generate a strong one)
+# 1. Set the auth token (generate a strong one)
 openssl rand -hex 16              # copy the output
 npx wrangler secret put TOKEN     # paste it when prompted
 
-# 3. Deploy (build.mjs runs automatically via [build] command)
+# 2. Deploy (build.mjs runs automatically via [build] command; the Durable
+#    Object migration applies itself on the first deploy)
 npm run deploy
 ```
 
@@ -302,8 +301,8 @@ native TTL, so the vault and pairing slots carry an `expiresAt` enforced on read
 - No secret or user value is ever put in a URL query/path — POST bodies and the `Authorization`
   header only. Fragments (`#…`) are client-only and never sent to the server.
 - All responses are `Cache-Control: no-store`.
-- Credentials are single-use (deleted on claim) + TTL-bound in KV + clipboard auto-clears a few
-  seconds after paste.
+- Credentials are single-use (deleted on claim), TTL-bound in the Durable Object, and the
+  clipboard auto-clears a few seconds after paste.
 
 **Accepted risks:** anyone with physical access to the car while a value is on-screen, or with
 the car's stored secrets, can see it. The car is a semi-shared device — don't send anything you

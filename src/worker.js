@@ -1,5 +1,6 @@
 // clip-to-car — one Cloudflare Worker serving both the HTML pages and the JSON
-// API (plan §4/§6). Storage is Workers KV (§7). The server is deliberately
+// API (plan §4/§6). Storage is a Durable Object (§7, and src/store.js for why
+// KV could not be used). The server is deliberately
 // "blind": it stores/returns ciphertext for credentials and pairing and never
 // sees KEY or the optical pairing key W (§5).
 //
@@ -34,8 +35,8 @@ export { ClipStore };
 
 // --- Config knobs (surfaced here per §15) -----------------------------------
 
-const DEFAULT_VAULT_TTL_SECONDS = 120; // credential lifetime in KV
-const DEFAULT_PAIR_TTL_SECONDS = 120; // pairing-slot lifetime in KV
+const DEFAULT_VAULT_TTL_SECONDS = 120; // credential lifetime
+const DEFAULT_PAIR_TTL_SECONDS = 120; // pairing-slot lifetime
 const MAX_BODY_BYTES = 8192; // reject oversized POST bodies (§6 validation)
 const SHORT_LINK_TIMEOUT_MS = 6000; // cap on the map short-link redirect fetch
 // How much of a fetched map page to scan. A real Yandex org page hit a 400k
