@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>Nav Benchmark · Clip to Car</title>
+<style>
+  :root { --bg:#0b0f14; --card:#141b23; --edge:#243040; --fg:#f4f7fb; --muted:#9fb0c3; --accent:#37c8ff; --accent-ink:#04121a; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom)); }
+  h1 { font-size:19px; margin:0 0 4px; } .sub { color:var(--muted); font-size:14px; margin:0 0 16px; max-width:640px; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:14px; padding:16px; max-width:680px; margin:0 auto 14px; }
+  label { font-size:13px; color:var(--muted); display:block; margin:10px 0 4px; }
+  input { width:100%; font-size:16px; padding:10px 12px; border-radius:10px; border:1px solid var(--edge); background:#0f1720; color:var(--fg); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .scheme { border:1px solid var(--edge); border-radius:12px; padding:12px; margin:10px 0; }
+  .scheme .name { font-weight:700; font-size:15px; }
+  .scheme .url { font-size:12px; color:var(--muted); word-break:break-all; margin:6px 0 10px; user-select:text; }
+  a.try { display:inline-flex; align-items:center; justify-content:center; min-height:46px; padding:0 16px; font-size:16px; font-weight:700;
+          border-radius:10px; background:var(--accent); color:var(--accent-ink); text-decoration:none; }
+  .note { font-size:12px; color:var(--muted); margin-top:8px; }
+</style>
+</head>
+<body>
+  <h1>Nav launch benchmark <span class="sub">(Spike 3)</span></h1>
+  <p class="sub">Open this on the car browser. For each scheme, tap <b>Try</b> and record whether it opens an app, and whether the pin lands on the correct spot. Default point is central Yerevan. This page holds no secrets.</p>
+
+  <div class="card">
+    <div class="grid">
+      <div><label for="lat">Latitude (WGS-84)</label><input id="lat" type="text" value="40.177200" /></div>
+      <div><label for="lon">Longitude (WGS-84)</label><input id="lon" type="text" value="44.512600" /></div>
+    </div>
+    <label for="name">Place name</label>
+    <input id="name" type="text" value="Republic Square, Yerevan" />
+  </div>
+
+  <div class="card" id="schemes"></div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  function enc(s) { return encodeURIComponent(s); }
+
+  // Candidate launch mechanisms (§9.1/§12). yandexnavi/yandexmaps are expected
+  // to FAIL on a China-spec car (apps not installed) — kept here to confirm.
+  var SCHEMES = [
+    { name: "AMap navi (dev=0)", note: "Built-in AMap turn-by-turn; dev=0 = WGS-84 (expected correct outside China).",
+      build: function (la, lo, nm) { return "androidamap://navi?sourceApplication=clip-to-car&poiname=" + enc(nm) + "&lat=" + la + "&lon=" + lo + "&dev=0&style=2"; } },
+    { name: "AMap navi (dev=1)", note: "Same, but dev=1 = GCJ-02. Compare which value lands the pin correctly.",
+      build: function (la, lo, nm) { return "androidamap://navi?sourceApplication=clip-to-car&poiname=" + enc(nm) + "&lat=" + la + "&lon=" + lo + "&dev=1&style=2"; } },
+    { name: "AMap route plan (dev=0)", note: "amapuri route planner to destination, WGS-84.",
+      build: function (la, lo, nm) { return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat=" + la + "&dlon=" + lo + "&dname=" + enc(nm) + "&dev=0&t=0"; } },
+    { name: "AMap route plan (dev=1)", note: "Same, GCJ-02.",
+      build: function (la, lo, nm) { return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat=" + la + "&dlon=" + lo + "&dname=" + enc(nm) + "&dev=1&t=0"; } },
+    { name: "geo: intent", note: "Generic Android geo intent; opens whatever handles geo:.",
+      build: function (la, lo, nm) { return "geo:" + la + "," + lo + "?q=" + la + "," + lo + "(" + enc(nm) + ")"; } },
+    { name: "Yandex Maps web route", note: "Browser fallback — no app needed; best Armenia coverage.",
+      build: function (la, lo) { return "https://yandex.com/maps/?rtext=~" + la + "," + lo + "&rtt=auto"; } },
+    { name: "Yandex Maps web pin", note: "Browser fallback — just drops a pin (whatshere).",
+      build: function (la, lo) { return "https://yandex.com/maps/?whatshere%5Bpoint%5D=" + lo + "," + la + "&whatshere%5Bzoom%5D=17"; } },
+    { name: "yandexnavi:// (expected FAIL)", note: "App not installed on a China-spec car; confirm it does nothing.",
+      build: function (la, lo) { return "yandexnavi://build_route_on_map?lat_to=" + la + "&lon_to=" + lo; } },
+  ];
+
+  function rebuild() {
+    var la = $("lat").value.trim(), lo = $("lon").value.trim(), nm = $("name").value.trim();
+    var host = $("schemes"); host.innerHTML = "";
+    SCHEMES.forEach(function (s) {
+      var url = s.build(la, lo, nm);
+      var div = document.createElement("div"); div.className = "scheme";
+      var name = document.createElement("div"); name.className = "name"; name.textContent = s.name;
+      var u = document.createElement("div"); u.className = "url"; u.textContent = url;
+      var a = document.createElement("a"); a.className = "try"; a.textContent = "Try"; a.href = url; a.rel = "noopener";
+      var note = document.createElement("div"); note.className = "note"; note.textContent = s.note;
+      div.appendChild(name); div.appendChild(u); div.appendChild(a); div.appendChild(note);
+      host.appendChild(div);
+    });
+  }
+  ["lat", "lon", "name"].forEach(function (id) { $(id).addEventListener("input", rebuild); });
+  rebuild();
+})();
+</script>
+</body>
+</html>

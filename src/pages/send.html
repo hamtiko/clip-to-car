@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark light" />
+<title>Send to Car · Clip to Car</title>
+<style>
+  :root { --bg:#0b0f14; --card:#141b23; --edge:#243040; --fg:#f4f7fb; --muted:#9fb0c3;
+          --accent:#37c8ff; --accent-ink:#04121a; --ok:#2ecc71; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
+         font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         padding:max(20px,env(safe-area-inset-top)) 18px max(20px,env(safe-area-inset-bottom)); }
+  h1 { font-size:20px; margin:0 0 4px; } .sub { color:var(--muted); font-size:14px; margin:0 0 18px; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:16px; padding:20px; max-width:520px; margin:0 auto; }
+  label { display:block; font-size:14px; color:var(--muted); margin:14px 0 6px; }
+  input { width:100%; font-size:16px; padding:12px 14px; border-radius:12px; border:1px solid var(--edge); background:#0f1720; color:var(--fg); }
+  .withbtn { display:flex; gap:8px; } .withbtn input { flex:1; }
+  .paste { flex:0 0 auto; min-height:0; padding:0 14px; font-size:14px; width:auto; margin:0; background:transparent; color:var(--fg); border:1px solid var(--edge); border-radius:12px; }
+  button { width:100%; min-height:56px; font-size:19px; font-weight:700; border:none; border-radius:14px; background:var(--accent); color:var(--accent-ink); margin-top:20px; cursor:pointer; }
+  button[disabled] { opacity:.5; }
+  .msg { margin-top:16px; font-size:15px; min-height:22px; } .msg.ok { color:var(--ok); } .msg.err { color:var(--err); }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Send credential to car</h1>
+    <p class="sub">Encrypted on this phone; the server only ever stores ciphertext. Expires after a couple of minutes or once revealed on the car.</p>
+
+    <label for="label">Label (optional)</label>
+    <input id="label" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="e.g. Spotify" />
+
+    <label for="username">Username (optional)</label>
+    <input id="username" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" />
+
+    <label for="password">Password / secret (required)</label>
+    <div class="withbtn">
+      <input id="password" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <button class="paste" id="pasteBtn" type="button">Paste</button>
+    </div>
+
+    <button id="send" type="button">Send to car</button>
+    <p class="msg" id="msg" role="status"></p>
+  </div>
+
+<script>
+/*__INLINE_CRYPTO__*/
+</script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var msg = $("msg"), sendBtn = $("send");
+  function say(text, cls) { msg.textContent = text; msg.className = "msg" + (cls ? " " + cls : ""); }
+  function safeLS(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
+
+  // Secrets from the fragment (bookmark) or this phone's localStorage.
+  var frag = new URLSearchParams(location.hash.slice(1));
+  var token = frag.get("t") || safeLS(function () { return localStorage.getItem("ctc.token"); }, null);
+  var key = frag.get("k") || safeLS(function () { return localStorage.getItem("ctc.key"); }, null);
+  // First open with a #t=&k= bookmark: remember for /pair and future sends.
+  if (frag.get("t")) safeLS(function () { localStorage.setItem("ctc.token", frag.get("t")); });
+  if (frag.get("k")) safeLS(function () { localStorage.setItem("ctc.key", frag.get("k")); });
+
+  if (!token || !key) {
+    say("Missing token or key. Open this page from your saved sender bookmark (…/send#t=TOKEN&k=KEY).", "err");
+    sendBtn.disabled = true;
+  }
+
+  $("pasteBtn").onclick = function () {
+    if (!navigator.clipboard || !navigator.clipboard.readText) { say("Paste isn't available — type or long-press to paste.", "err"); return; }
+    navigator.clipboard.readText().then(function (t) { $("password").value = t; say(""); })
+      .catch(function () { say("Couldn't read clipboard — long-press the field to paste.", "err"); });
+  };
+
+  sendBtn.onclick = function () {
+    var label = $("label").value.trim();
+    var username = $("username").value.trim();
+    var password = $("password").value;
+    if (!password) { say("Enter a password or secret.", "err"); return; }
+
+    // Build the plaintext (§8). The label lives INSIDE the ciphertext so the
+    // server and /vault/peek never learn which service it is.
+    var payload = username
+      ? { kind: "login", label: label || null, username: username, password: password }
+      : { kind: "secret", label: label || null, value: password };
+
+    sendBtn.disabled = true; say("Encrypting…");
+    encryptJSON(key, payload).then(function (wire) {
+      return fetch("/vault", {
+        method: "POST", cache: "no-store",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ v: 1, iv: wire.iv, ct: wire.ct }),
+      });
+    }).then(function (res) {
+      sendBtn.disabled = false;
+      if (res.status === 401) { say("Token rejected by the server.", "err"); return; }
+      if (!res.ok) { say("Server error (" + res.status + ").", "err"); return; }
+      say("Sent ✓ — reveal it on the car within ~2 min.", "ok");
+      $("label").value = ""; $("username").value = ""; $("password").value = "";
+    }).catch(function (e) {
+      sendBtn.disabled = false;
+      say("Couldn't send: " + (e && e.message ? e.message : "error"), "err");
+    });
+  };
+})();
+</script>
+</body>
+</html>

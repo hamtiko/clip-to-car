@@ -1,0 +1,37 @@
+# Cloudflare Worker configuration for clip-to-car.
+#
+# One Worker serves both the HTML pages and the JSON API, so there is a single
+# deploy, one origin (no CORS), and a global edge with a generous free tier.
+#
+# Setup (see README.md §Deploy):
+#   1. npm install
+#   2. npx wrangler login
+#   3. npx wrangler kv namespace create CLIPBOARD   # paste the id below
+#   4. npx wrangler secret put TOKEN                # generate: openssl rand -hex 16
+#   5. npm run deploy
+
+name = "clip-to-car"
+main = "src/worker.js"
+compatibility_date = "2024-09-23"
+# Required by @cloudflare/vitest-pool-workers; the Worker itself uses no Node APIs.
+compatibility_flags = ["nodejs_compat"]
+
+# `node build.mjs` inlines the shared crypto/QR helpers into the page
+# templates and writes src/generated/pages.js, which src/worker.js imports.
+# Wrangler runs this before bundling on every `deploy` / `dev`.
+[build]
+command = "node build.mjs"
+
+# Workers KV: one namespace holds the address (`latest`), the encrypted
+# credential (`vault`), and the transient pairing slots (`pair:<id>`).
+# Create it with `wrangler kv namespace create CLIPBOARD` and paste the id here.
+[[kv_namespaces]]
+binding = "CLIPBOARD"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# TOKEN (the bearer auth secret) is NOT stored here. Set it as a secret:
+#   npx wrangler secret put TOKEN
+# Optional overrides (uncomment to change defaults):
+# [vars]
+# VAULT_TTL_SECONDS = "120"
+# PAIR_TTL_SECONDS  = "120"

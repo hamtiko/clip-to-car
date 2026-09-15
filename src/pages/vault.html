@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>Credential · Clip to Car</title>
+<style>
+  :root { --bg:#140f0a; --card:#211a12; --edge:#3a2f20; --fg:#fbf6ef; --muted:#c8b79f;
+          --accent:#ffb02e; --accent-ink:#1a1102; --ok:#2ecc71; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         display:flex; flex-direction:column; min-height:100%;
+         padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom)); }
+  header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .dot { width:12px; height:12px; border-radius:50%; background:var(--muted); }
+  .dot.live { background:var(--ok); } .dot.err { background:var(--err); }
+  .title { font-size:15px; letter-spacing:.04em; text-transform:uppercase; color:var(--accent); }
+  .status { margin-left:auto; font-size:14px; color:var(--muted); }
+  main { flex:1 1 auto; display:flex; flex-direction:column; justify-content:center; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:18px; padding:22px; }
+  .label { font-size:14px; color:var(--muted); margin:0 0 6px; }
+  .big { font-size:clamp(22px,5.5vw,34px); font-weight:700; }
+  .field { margin:12px 0; }
+  .field .val { font-size:clamp(20px,5vw,30px); font-weight:700; word-break:break-all; user-select:text;
+                background:#170f06; border:1px solid var(--edge); border-radius:12px; padding:12px 14px; }
+  .btn { display:flex; align-items:center; justify-content:center; width:100%; min-height:60px; font-size:20px; font-weight:700;
+         border-radius:16px; border:1px solid var(--edge); background:var(--accent); color:var(--accent-ink); cursor:pointer; margin-top:10px; }
+  .btn.secondary { background:transparent; color:var(--fg); } .btn.copied { background:var(--ok); }
+  .btn:active { transform:translateY(1px); }
+  .countdown { text-align:center; font-size:15px; color:var(--muted); margin-top:14px; min-height:20px; }
+  .err { color:var(--err); } .muted { color:var(--muted); }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  [hidden] { display:none !important; }
+  @media (prefers-reduced-motion:reduce){ .btn:active{transform:none} }
+</style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot"></span>
+    <span class="title">🔒 Credential</span>
+    <span class="status" id="status">…</span>
+  </header>
+  <main>
+    <section id="waiting" hidden>
+      <div class="card">
+        <p class="label">Status</p>
+        <div class="big" id="waitMsg">Nothing waiting</div>
+      </div>
+      <button class="btn" id="reveal" type="button" hidden>Reveal credential</button>
+    </section>
+
+    <section id="revealed" hidden>
+      <div class="card" id="fields"></div>
+      <button class="btn secondary" id="clearBtn" type="button">Clear clipboard now</button>
+      <p class="countdown" id="countdown"></p>
+    </section>
+
+    <section id="fatal" hidden>
+      <div class="card"><div class="big err" id="fatalMsg"></div></div>
+    </section>
+  </main>
+
+<script>
+/*__INLINE_CRYPTO__*/
+</script>
+<script>
+(function () {
+  "use strict";
+  var PEEK_POLL_MS = 3000;   // /vault/peek poll interval
+  var CLEAR_MS = 20000;      // auto-clear clipboard after a copy (§11)
+
+  var $ = function (id) { return document.getElementById(id); };
+  var dot = $("dot"), statusEl = $("status");
+  var clearTimer = null, countdownTimer = null;
+  function safeLS(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
+
+  var frag = new URLSearchParams(location.hash.slice(1));
+  var token = frag.get("t") || safeLS(function () { return localStorage.getItem("ctc.token"); }, null);
+  var key = frag.get("k") || safeLS(function () { return localStorage.getItem("ctc.key"); }, null);
+  if (frag.get("t") || frag.get("k")) { try { history.replaceState(null, "", location.pathname); } catch (e) {} }
+
+  function fatal(text) { $("fatal").hidden = false; $("waiting").hidden = true; $("revealed").hidden = true; $("fatalMsg").textContent = text; dot.className = "dot err"; statusEl.textContent = "Error"; }
+
+  if (!token || !key) { fatal("Missing token or key — open the car vault bookmark, or pair the car first."); return; }
+
+  // --- peek loop (does not consume) ------------------------------------------
+  $("waiting").hidden = false;
+  function peek() {
+    fetch("/vault/peek", { headers: { Authorization: "Bearer " + token }, cache: "no-store" })
+      .then(function (res) { if (res.status === 401) { dot.className = "dot err"; statusEl.textContent = "Key rejected"; throw { stop: true }; } return res.json(); })
+      .then(function (data) {
+        dot.className = "dot live"; statusEl.textContent = "Live";
+        if (data.present) { $("waitMsg").textContent = "Credential waiting"; $("reveal").hidden = false; }
+        else { $("waitMsg").textContent = "Nothing waiting"; $("reveal").hidden = true; }
+        setTimeout(peek, PEEK_POLL_MS);
+      })
+      .catch(function (e) { if (e && e.stop) return; statusEl.textContent = "Reconnecting…"; setTimeout(peek, PEEK_POLL_MS); });
+  }
+  peek();
+
+  // --- reveal = claim (single-use) + decrypt ---------------------------------
+  $("reveal").onclick = function () {
+    $("reveal").disabled = true; statusEl.textContent = "Revealing…";
+    fetch("/vault/claim", { headers: { Authorization: "Bearer " + token }, cache: "no-store" })
+      .then(function (res) { if (res.status === 401) throw new Error("Key rejected"); return res.json(); })
+      .then(function (data) {
+        if (!data.present) { $("reveal").disabled = false; $("waitMsg").textContent = "Nothing waiting"; $("reveal").hidden = true; statusEl.textContent = "Live"; return; }
+        return decryptJSON(key, data.iv, data.ct).then(showCredential).catch(function () {
+          fatal("Couldn't decrypt — key mismatch. The item has been consumed; send it again.");
+        });
+      })
+      .catch(function (e) { fatal(e && e.message ? e.message : "Reveal failed."); });
+  };
+
+  function showCredential(cred) {
+    $("waiting").hidden = true; $("revealed").hidden = false; statusEl.textContent = "Revealed";
+    var fields = $("fields"); fields.innerHTML = "";
+    if (cred.label) { var l = document.createElement("p"); l.className = "label"; l.textContent = cred.label; fields.appendChild(l); }
+
+    if (cred.kind === "login") {
+      addField(fields, "Username", cred.username || "", "Copy username");
+      addField(fields, "Password", cred.password || "", "Copy password");
+    } else {
+      addField(fields, "Secret", cred.value || "", "Copy secret");
+    }
+  }
+
+  function addField(container, name, value, btnLabel) {
+    var wrap = document.createElement("div"); wrap.className = "field";
+    var lab = document.createElement("p"); lab.className = "label"; lab.textContent = name;
+    var val = document.createElement("div"); val.className = "val"; val.textContent = value;
+    var btn = document.createElement("button"); btn.className = "btn"; btn.type = "button"; btn.textContent = btnLabel;
+    btn.onclick = function () { doCopy(value, btn, btnLabel); };
+    wrap.appendChild(lab); wrap.appendChild(val); wrap.appendChild(btn);
+    container.appendChild(wrap);
+  }
+
+  // --- copy + clipboard auto-clear (§11) -------------------------------------
+  function doCopy(value, btn, origLabel) {
+    navigator.clipboard.writeText(value).then(function () {
+      btn.classList.add("copied"); btn.textContent = "Copied ✓";
+      setTimeout(function () { btn.classList.remove("copied"); btn.textContent = origLabel; }, 1600);
+      startClearCountdown();
+    }).catch(function () { $("countdown").textContent = "Couldn't copy — long-press the value to copy."; });
+  }
+
+  function startClearCountdown() {
+    if (clearTimer) clearTimeout(clearTimer);
+    if (countdownTimer) clearInterval(countdownTimer);
+    var end = Date.now() + CLEAR_MS;
+    function tick() {
+      var left = Math.max(0, Math.round((end - Date.now()) / 1000));
+      $("countdown").textContent = "Clipboard clears in " + left + "s";
+      if (left <= 0) clearInterval(countdownTimer);
+    }
+    tick(); countdownTimer = setInterval(tick, 1000);
+    clearTimer = setTimeout(clearClipboard, CLEAR_MS);
+  }
+
+  function clearClipboard() {
+    navigator.clipboard.writeText("").then(function () { $("countdown").textContent = "Clipboard cleared."; })
+      .catch(function () { $("countdown").textContent = "Couldn't auto-clear — clear it manually."; });
+  }
+
+  $("clearBtn").onclick = function () { if (clearTimer) clearTimeout(clearTimer); if (countdownTimer) clearInterval(countdownTimer); clearClipboard(); };
+})();
+</script>
+</body>
+</html>

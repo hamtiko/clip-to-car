@@ -1,0 +1,21 @@
+{
+  "name": "clip-to-car",
+  "version": "1.0.0",
+  "description": "Move text (addresses, credentials) from an iPhone to an XPeng car screen via a single Cloudflare Worker.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "pretest": "node build.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "predeploy": "node build.mjs",
+    "deploy": "wrangler deploy",
+    "dev": "node build.mjs && wrangler dev"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.5.2",
+    "vitest": "~2.1.9",
+    "wrangler": "^3.78.0"
+  }
+}

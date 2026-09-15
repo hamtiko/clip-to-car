@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>Clip to Car</title>
+<style>
+  :root { --bg:#0b0f14; --card:#141b23; --edge:#243040; --fg:#f4f7fb; --muted:#9fb0c3;
+          --accent:#37c8ff; --accent-ink:#04121a; --ok:#2ecc71; --warn:#ffcc4d; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+         display:flex; flex-direction:column; min-height:100%; padding:max(16px,env(safe-area-inset-top)) 16px max(16px,env(safe-area-inset-bottom)); }
+  header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .dot { width:12px; height:12px; border-radius:50%; background:var(--muted); flex:0 0 auto; transition:background .3s,opacity .3s; }
+  .dot.live { background:var(--ok); } .dot.recon { background:var(--warn); opacity:.5; } .dot.err { background:var(--err); }
+  .title { font-size:15px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+  .status { margin-left:auto; font-size:14px; color:var(--muted); }
+  main { flex:1 1 auto; display:flex; flex-direction:column; justify-content:center; gap:18px; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:18px; padding:22px; }
+  .label { font-size:14px; color:var(--muted); margin:0 0 8px; }
+  .value { font-size:clamp(24px,6vw,40px); font-weight:700; line-height:1.2; word-break:break-word; user-select:text; }
+  .place-name { font-size:clamp(22px,5.5vw,36px); font-weight:700; line-height:1.2; word-break:break-word; }
+  .coords { font-size:18px; color:var(--muted); margin-top:6px; user-select:text; }
+  .ago { font-size:15px; color:var(--muted); margin-top:12px; }
+  .btn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%;
+         min-height:64px; font-size:22px; font-weight:700; border-radius:16px; border:1px solid var(--edge);
+         background:var(--accent); color:var(--accent-ink); cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .btn:active { transform:translateY(1px); } .btn.copied { background:var(--ok); }
+  .btn.secondary { background:transparent; color:var(--fg); }
+  .btnrow { display:flex; flex-direction:column; gap:10px; margin-top:16px; }
+  .navbtn { display:flex; align-items:center; justify-content:center; min-height:54px; font-size:18px; font-weight:600;
+            border-radius:14px; border:1px solid var(--edge); background:#0f1720; color:var(--fg); text-decoration:none; }
+  .muted { color:var(--muted); } .hint { font-size:14px; color:var(--muted); margin-top:14px; text-align:center; }
+  .qrwrap { display:flex; flex-direction:column; align-items:center; gap:16px; }
+  .qr { width:min(60vw,320px); background:#fff; padding:14px; border-radius:16px; }
+  .qr svg { display:block; width:100%; height:auto; }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  [hidden] { display:none !important; }
+  @media (prefers-reduced-motion:reduce){ .btn:active{transform:none} .dot{transition:none} }
+</style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="dot" aria-hidden="true"></span>
+    <span class="title">Clip&nbsp;to&nbsp;Car</span>
+    <span class="status" id="status">Starting…</span>
+  </header>
+
+  <main>
+    <!-- Address / place view -->
+    <section id="app" hidden>
+      <div class="card" id="card">
+        <p class="label" id="cardLabel">Latest</p>
+        <div id="valueWrap"></div>
+        <p class="ago" id="ago"></p>
+      </div>
+      <div class="btnrow" id="actions"></div>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <!-- QR pairing view -->
+    <section id="pairing" hidden>
+      <div class="card qrwrap">
+        <p class="label" style="text-align:center">Scan with your iPhone camera to pair this car</p>
+        <div class="qr" id="qr" aria-label="Pairing QR code"></div>
+        <p class="muted" id="pairMsg" style="text-align:center">Point the camera at this code, then tap the link.</p>
+      </div>
+    </section>
+
+    <!-- Fallback when we cannot pair or read a secret -->
+    <section id="fallback" hidden>
+      <div class="card">
+        <p class="label">Not set up</p>
+        <div class="value">Open this page from your saved car bookmark.</div>
+        <p class="hint">The bookmark carries the access token in its <code>#…</code> fragment.</p>
+      </div>
+    </section>
+  </main>
+
+<script>
+/*__INLINE_CRYPTO__*/
+</script>
+<script>
+/*__INLINE_QR__*/
+</script>
+<script>
+(function () {
+  "use strict";
+  var POLL_MS = 3000;         // /latest poll interval (§9)
+  var PAIR_POLL_MS = 2000;    // /pair/claim poll interval (§5.1)
+  var PAIR_MAX_FAILS = 3;     // regenerate QR after this many decrypt failures
+
+  // Which "open in nav" schemes to render (§9.1). Only list schemes the Spike 3
+  // benchmark confirmed on THIS car — a button that does nothing is worse than
+  // no button. The Yandex web route just opens a page in this browser, so it is
+  // safe to ship by default. Uncomment the app deep links once benchmarked.
+  var NAV_SCHEMES = [
+    { id: "yandexWeb", label: "Open route (Yandex web)",
+      build: function (lat, lon) { return "https://yandex.com/maps/?rtext=~" + lat + "," + lon + "&rtt=auto"; } },
+    // { id:"amapNavi", label:"Navigate (AMap)", build:function(lat,lon,name){ return "androidamap://navi?sourceApplication=clip-to-car&poiname="+encodeURIComponent(name||"")+"&lat="+lat+"&lon="+lon+"&dev=0&style=2"; } },
+    // { id:"amapRoute", label:"Route (AMap)", build:function(lat,lon,name){ return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat="+lat+"&dlon="+lon+"&dname="+encodeURIComponent(name||"")+"&dev=0&t=0"; } },
+    // { id:"geo", label:"Open in maps", build:function(lat,lon,name){ return "geo:"+lat+","+lon+"?q="+lat+","+lon+"("+encodeURIComponent(name||"")+")"; } },
+  ];
+
+  var $ = function (id) { return document.getElementById(id); };
+  var dot = $("dot"), statusEl = $("status");
+  var lastData = null, agoTimer = null;
+
+  function setDot(cls) { dot.className = "dot" + (cls ? " " + cls : ""); }
+  function setStatus(text) { statusEl.textContent = text; }
+
+  function safeLS(fn, dflt) { try { return fn(); } catch (e) { return dflt; } }
+
+  // --- secret resolution (§9): localStorage -> fragment (persist) -> pairing --
+  function loadSecrets() {
+    var token = safeLS(function () { return localStorage.getItem("ctc.token"); }, null);
+    var key = safeLS(function () { return localStorage.getItem("ctc.key"); }, null);
+    var frag = new URLSearchParams(location.hash.slice(1));
+    var ft = frag.get("t"), fk = frag.get("k");
+    if (ft) { token = ft; safeLS(function () { localStorage.setItem("ctc.token", ft); }); }
+    if (fk) { key = fk; safeLS(function () { localStorage.setItem("ctc.key", fk); }); }
+    // Strip secrets from the visible address bar once captured.
+    if ((ft || fk) && history.replaceState) {
+      try { history.replaceState(null, "", location.pathname); } catch (e) {}
+    }
+    return { token: token, key: key };
+  }
+
+  function canPair() {
+    if (!window.crypto || !crypto.subtle || !crypto.getRandomValues) return false;
+    return safeLS(function () { localStorage.setItem("ctc.test", "1"); localStorage.removeItem("ctc.test"); return true; }, false);
+  }
+
+  // --- relative time ----------------------------------------------------------
+  function relTime(ts) {
+    if (!ts) return "";
+    var s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return s + " sec ago";
+    var m = Math.round(s / 60);
+    if (m < 60) return m + " min ago";
+    var h = Math.round(m / 60);
+    if (h < 24) return h + " hr ago";
+    return Math.round(h / 24) + " d ago";
+  }
+
+  // --- clipboard copy ---------------------------------------------------------
+  function copyText(text, btn, okLabel) {
+    var orig = btn.textContent;
+    navigator.clipboard.writeText(text).then(function () {
+      btn.classList.add("copied");
+      btn.textContent = okLabel || "Copied ✓";
+      setTimeout(function () { btn.classList.remove("copied"); btn.textContent = orig; }, 1800);
+    }).catch(function () {
+      $("hint").textContent = "Couldn't copy automatically — long-press the text above to copy it.";
+    });
+  }
+
+  // --- render the address / place view ---------------------------------------
+  function render(data) {
+    lastData = data;
+    var valueWrap = $("valueWrap"), actions = $("actions"), hint = $("hint");
+    actions.innerHTML = ""; hint.textContent = "";
+
+    if (!data || data.text == null) {
+      $("cardLabel").textContent = "Nothing yet";
+      valueWrap.innerHTML = '<div class="value muted">Send an address from your phone.</div>';
+      $("ago").textContent = "";
+      return;
+    }
+
+    if (data.kind === "place" && typeof data.lat === "number" && typeof data.lon === "number") {
+      renderPlace(data, valueWrap, actions);
+    } else {
+      renderAddress(data, valueWrap, actions);
+    }
+    $("ago").textContent = data.ts ? "Sent " + relTime(data.ts) : "";
+  }
+
+  function renderAddress(data, valueWrap, actions) {
+    $("cardLabel").textContent = "Address";
+    var v = document.createElement("div");
+    v.className = "value"; v.textContent = data.text;
+    valueWrap.innerHTML = ""; valueWrap.appendChild(v);
+    var copy = mkBtn("Copy", "btn");
+    copy.onclick = function () { copyText(data.text, copy); };
+    actions.appendChild(copy);
+  }
+
+  function renderPlace(data, valueWrap, actions) {
+    $("cardLabel").textContent = "Place";
+    var coordStr = data.lat.toFixed(6) + ", " + data.lon.toFixed(6);
+    var html = "";
+    html += '<div class="place-name">' + escapeHtml(data.name || data.text) + "</div>";
+    html += '<div class="coords">' + coordStr + "</div>";
+    valueWrap.innerHTML = html;
+
+    // Copy coordinates is the always-works path into the built-in nav search.
+    var copyCoords = mkBtn("Copy coordinates", "btn");
+    copyCoords.onclick = function () { copyText(coordStr, copyCoords); };
+    actions.appendChild(copyCoords);
+
+    if (data.name) {
+      var copyName = mkBtn("Copy name", "btn secondary");
+      copyName.onclick = function () { copyText(data.name, copyName, "Copied ✓"); };
+      actions.appendChild(copyName);
+    }
+
+    NAV_SCHEMES.forEach(function (scheme) {
+      var a = document.createElement("a");
+      a.className = "navbtn";
+      a.textContent = scheme.label;
+      a.href = scheme.build(data.lat, data.lon, data.name || "");
+      a.rel = "noopener";
+      actions.appendChild(a);
+    });
+  }
+
+  function mkBtn(label, cls) { var b = document.createElement("button"); b.className = cls; b.type = "button"; b.textContent = label; return b; }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]; }); }
+
+  // --- polling loop -----------------------------------------------------------
+  function startApp(token) {
+    $("app").hidden = false;
+    setDot(""); setStatus("Connecting…");
+
+    function tick() {
+      fetch("/latest", { headers: { Authorization: "Bearer " + token }, cache: "no-store" })
+        .then(function (res) {
+          if (res.status === 401) { setDot("err"); setStatus("Key rejected"); throw { stop: true }; }
+          return res.json();
+        })
+        .then(function (data) { setDot("live"); setStatus("Live"); render(data); scheduleNext(); })
+        .catch(function (e) {
+          if (e && e.stop) return; // 401 — stop polling
+          setDot("recon"); setStatus("Reconnecting…"); scheduleNext();
+        });
+    }
+    function scheduleNext() { setTimeout(tick, POLL_MS); }
+    tick();
+
+    // Keep the "sent N ago" label fresh even without new data.
+    agoTimer = setInterval(function () {
+      if (lastData && lastData.ts) $("ago").textContent = "Sent " + relTime(lastData.ts);
+    }, 15000);
+  }
+
+  // --- QR pairing (§5.1) ------------------------------------------------------
+  function startPairing() {
+    $("pairing").hidden = false;
+    setDot(""); setStatus("Pairing");
+    beginPairAttempt(0);
+  }
+
+  function beginPairAttempt(fails) {
+    var pairId = b64uEncode(randomBytes(16)); // 22-char base64url id
+    var wBytes = randomBytes(32);             // optical wrapping key W (never sent)
+    var phoneUrl = location.origin + "/pair#id=" + pairId + "&w=" + b64uEncode(wBytes);
+    try { $("qr").innerHTML = makeQrSvg(phoneUrl, 8); }
+    catch (e) { showFallback(); return; }
+    pollPairClaim(pairId, wBytes, fails);
+  }
+
+  function pollPairClaim(pairId, wBytes, fails) {
+    fetch("/pair/claim", {
+      method: "POST", cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: pairId }),
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.present) { setTimeout(function () { pollPairClaim(pairId, wBytes, fails); }, PAIR_POLL_MS); return; }
+      decryptJSON(wBytes, data.iv, data.ct).then(function (secrets) {
+        if (!secrets || !secrets.t) throw new Error("no token");
+        safeLS(function () { localStorage.setItem("ctc.token", secrets.t); });
+        if (secrets.k) safeLS(function () { localStorage.setItem("ctc.key", secrets.k); });
+        $("pairMsg").textContent = "Paired ✓";
+        setTimeout(function () { location.reload(); }, 500);
+      }).catch(function () {
+        // Slot was consumed but decrypt failed — regenerate and ask to rescan.
+        var next = fails + 1;
+        $("pairMsg").textContent = "Pairing failed — rescan the new code.";
+        beginPairAttempt(next >= PAIR_MAX_FAILS ? 0 : next);
+      });
+    }).catch(function () {
+      setTimeout(function () { pollPairClaim(pairId, wBytes, fails); }, PAIR_POLL_MS);
+    });
+  }
+
+  function showFallback() { $("app").hidden = true; $("pairing").hidden = true; $("fallback").hidden = false; setStatus("Not set up"); }
+
+  // --- boot -------------------------------------------------------------------
+  var secrets = loadSecrets();
+  if (secrets.token) { startApp(secrets.token); }
+  else if (canPair()) { startPairing(); }
+  else { showFallback(); }
+})();
+</script>
+</body>
+</html>
