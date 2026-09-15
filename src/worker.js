@@ -88,14 +88,25 @@ function isAuthed(request, env) {
   return safeEqual(m[1], env.TOKEN || "");
 }
 
-// Read a JSON body with a size cap. Returns { ok, data } or { ok:false }.
+// Read a JSON body with a size cap. Returns { ok, data } or { ok:false, reason }.
+// The reason is specific on purpose: these routes are driven by hand-built
+// clients (an iOS Shortcut, curl), where a bare "bad request" gives the author
+// nothing to act on. All of it is behind the bearer token anyway.
 async function readJson(request) {
   const text = await request.text();
-  if (text.length > MAX_BODY_BYTES) return { ok: false };
+  if (text.length > MAX_BODY_BYTES) {
+    return { ok: false, reason: "body too large (max " + MAX_BODY_BYTES + " bytes)" };
+  }
+  if (text.trim() === "") {
+    return { ok: false, reason: 'empty body — expected JSON like {"text":"..."}' };
+  }
   try {
     return { ok: true, data: JSON.parse(text) };
   } catch {
-    return { ok: false };
+    return {
+      ok: false,
+      reason: 'body is not valid JSON — send a JSON request body, not form or raw text',
+    };
   }
 }
 
@@ -144,9 +155,13 @@ async function buildLatestRecord(text) {
 
 async function handleSet(request, env) {
   const body = await readJson(request);
-  if (!body.ok) return errorRes(400, "bad request");
-  const text = body.data && typeof body.data.text === "string" ? body.data.text : null;
-  if (text === null || text.trim() === "") return errorRes(400, "empty text");
+  if (!body.ok) return errorRes(400, body.reason);
+  const raw = body.data ? body.data.text : undefined;
+  if (typeof raw !== "string") {
+    return errorRes(400, 'expected a "text" field holding a string');
+  }
+  const text = raw;
+  if (text.trim() === "") return errorRes(400, "empty text");
   const record = await buildLatestRecord(text);
   await store(env, "setLatest", { record });
   return json({ ok: true });
@@ -160,7 +175,7 @@ async function handleLatest(env) {
 
 async function handleVaultPut(request, env) {
   const body = await readJson(request);
-  if (!body.ok) return errorRes(400, "bad request");
+  if (!body.ok) return errorRes(400, body.reason);
   const d = body.data || {};
   if (d.v !== 1 || !isNonEmptyB64u(d.iv) || !isNonEmptyB64u(d.ct)) {
     return errorRes(400, "bad ciphertext");
@@ -186,7 +201,7 @@ async function handleVaultClaim(env) {
 
 async function handlePairPut(request, env) {
   const body = await readJson(request);
-  if (!body.ok) return errorRes(400, "bad request");
+  if (!body.ok) return errorRes(400, body.reason);
   const d = body.data || {};
   if (typeof d.id !== "string" || !PAIR_ID_RE.test(d.id)) return errorRes(400, "bad id");
   if (!isNonEmptyB64u(d.iv) || !isNonEmptyB64u(d.ct)) return errorRes(400, "bad payload");
@@ -198,7 +213,7 @@ async function handlePairPut(request, env) {
 
 async function handlePairClaim(request, env) {
   const body = await readJson(request);
-  if (!body.ok) return errorRes(400, "bad request");
+  if (!body.ok) return errorRes(400, body.reason);
   const d = body.data || {};
   if (typeof d.id !== "string" || !PAIR_ID_RE.test(d.id)) return errorRes(400, "bad id");
   const { record } = await store(env, "claimPair", { id: d.id }); // single-use
