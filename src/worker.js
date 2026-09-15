@@ -13,6 +13,8 @@ import {
   PAIR_HTML,
   VAULT_HTML,
   NAV_BENCHMARK_HTML,
+  BUILD_ID,
+  BUILT_AT,
 } from "./generated/pages.js";
 import {
   looksLikeMapLink,
@@ -264,6 +266,9 @@ export default {
       if (path === "/pair") return html(PAIR_HTML);
       if (path === "/vault-view") return html(VAULT_HTML);
       if (path === "/nav-benchmark") return html(NAV_BENCHMARK_HTML);
+      // Which build is live. Public: the repo is public and this is only a
+      // commit id, but it settles "did my deploy land?" in one request.
+      if (path === "/version") return json({ sha: BUILD_ID, builtAt: BUILT_AT });
     }
 
     // Unauthenticated pairing API (safe by design — see §5.1).

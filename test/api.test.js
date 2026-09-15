@@ -37,6 +37,15 @@ describe("pages", () => {
     expect(await res.text()).toMatch(/Clip.?to.?Car/i);
   });
 
+  it("GET /version reports the build that is live", async () => {
+    const res = await req("/version");
+    expect(res.status).toBe(200);
+    const v = await res.json();
+    expect(typeof v.sha).toBe("string");
+    expect(v.sha.length).toBeGreaterThan(0);
+    expect(typeof v.builtAt).toBe("string");
+  });
+
   it("serves /send, /pair, /vault-view, /nav-benchmark", async () => {
     for (const p of ["/send", "/pair", "/vault-view", "/nav-benchmark"]) {
       const res = await req(p);
