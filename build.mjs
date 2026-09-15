@@ -26,6 +26,7 @@ function inlinable(file) {
 
 const CRYPTO = inlinable("crypto.js");
 const QR = inlinable("qr.js");
+const NAV = inlinable("navschemes.js");
 
 // page file -> exported constant name in generated/pages.js
 const PAGE_EXPORTS = {
@@ -43,6 +44,9 @@ function inlineHelpers(html, name) {
   }
   if (out.includes("/*__INLINE_QR__*/")) {
     out = out.replace("/*__INLINE_QR__*/", () => QR);
+  }
+  if (out.includes("/*__INLINE_NAV__*/")) {
+    out = out.replace("/*__INLINE_NAV__*/", () => NAV);
   }
   // Catch typos: a leftover INLINE token means a helper never got injected.
   const leftover = out.match(/\/\*__INLINE_[A-Z]+__\*\//);

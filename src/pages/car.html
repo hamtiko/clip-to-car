@@ -34,6 +34,12 @@
             border-radius:14px; border:1px solid var(--edge); background:#0f1720; color:var(--fg); text-decoration:none; }
   a.btn { text-decoration:none; }
   .inlink { color:var(--accent); word-break:break-all; }
+  .tester { margin-top:8px; border:1px solid var(--edge); border-radius:14px; padding:12px 14px; background:#0d141c; }
+  .tester summary { font-size:17px; font-weight:700; cursor:pointer; padding:6px 0; }
+  .trow { border-top:1px solid var(--edge); padding:14px 0 4px; }
+  .tnote { font-size:13px; color:var(--muted); margin:8px 0 0; }
+  .turl { font-size:12px; color:var(--muted); word-break:break-all; margin:6px 0 8px; user-select:text; }
+  .btn.small { min-height:44px; font-size:15px; }
   .muted { color:var(--muted); } .hint { font-size:14px; color:var(--muted); margin-top:14px; text-align:center; }
   .qrwrap { display:flex; flex-direction:column; align-items:center; gap:16px; }
   .qr { width:min(60vw,320px); background:#fff; padding:14px; border-radius:16px; }
@@ -91,23 +97,27 @@
 /*__INLINE_QR__*/
 </script>
 <script>
+/*__INLINE_NAV__*/
+</script>
+<script>
 (function () {
   "use strict";
   var POLL_MS = 3000;         // /latest poll interval (§9)
   var PAIR_POLL_MS = 2000;    // /pair/claim poll interval (§5.1)
   var PAIR_MAX_FAILS = 3;     // regenerate QR after this many decrypt failures
 
-  // Which "open in nav" schemes to render (§9.1). Only list schemes the Spike 3
-  // benchmark confirmed on THIS car — a button that does nothing is worse than
-  // no button. The Yandex web route just opens a page in this browser, so it is
-  // safe to ship by default. Uncomment the app deep links once benchmarked.
-  var NAV_SCHEMES = [
-    { id: "yandexWeb", label: "Open route (Yandex web)",
-      build: function (lat, lon) { return "https://yandex.com/maps/?rtext=~" + lat + "," + lon + "&rtt=auto"; } },
-    // { id:"amapNavi", label:"Navigate (AMap)", build:function(lat,lon,name){ return "androidamap://navi?sourceApplication=clip-to-car&poiname="+encodeURIComponent(name||"")+"&lat="+lat+"&lon="+lon+"&dev=0&style=2"; } },
-    // { id:"amapRoute", label:"Route (AMap)", build:function(lat,lon,name){ return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat="+lat+"&dlon="+lon+"&dname="+encodeURIComponent(name||"")+"&dev=0&t=0"; } },
-    // { id:"geo", label:"Open in maps", build:function(lat,lon,name){ return "geo:"+lat+","+lon+"?q="+lat+","+lon+"("+encodeURIComponent(name||"")+")"; } },
-  ];
+  // Ids from the shared NAV_SCHEMES catalogue (src/navschemes.js) to show as
+  // real buttons. Keep this to what the car has actually been seen to honour —
+  // a button that does nothing is worse than no button. The Yandex web route
+  // merely opens a page in this browser, so it is safe by default.
+  //
+  // Everything else stays reachable under "Try all nav schemes" below, which is
+  // how you work out what to add here.
+  var ENABLED_NAV_IDS = ["yandexWeb"];
+
+  function enabledSchemes() {
+    return NAV_SCHEMES.filter(function (s) { return ENABLED_NAV_IDS.indexOf(s.id) !== -1; });
+  }
 
   var $ = function (id) { return document.getElementById(id); };
   var dot = $("dot"), statusEl = $("status");
@@ -223,14 +233,53 @@
     var original = firstUrl(data.text);
     if (original) actions.appendChild(mkLinkBtn("Open original link", original, "navbtn"));
 
-    NAV_SCHEMES.forEach(function (scheme) {
-      var a = document.createElement("a");
-      a.className = "navbtn";
-      a.textContent = scheme.label;
-      a.href = scheme.build(data.lat, data.lon, data.name || "");
-      a.rel = "noopener";
-      actions.appendChild(a);
+    enabledSchemes().forEach(function (scheme) {
+      actions.appendChild(mkLinkBtn(scheme.label, scheme.build(data.lat, data.lon, data.name || ""), "navbtn"));
     });
+
+    actions.appendChild(buildSchemeTester(data));
+  }
+
+  // Collapsible panel listing EVERY candidate scheme, built from the place
+  // currently on screen. Tap each on the car and note which opens the native
+  // nav and whether the pin is right; the winners go into ENABLED_NAV_IDS.
+  function buildSchemeTester(data) {
+    var box = document.createElement("details");
+    box.className = "tester";
+    var sum = document.createElement("summary");
+    sum.textContent = "Try all nav schemes (" + NAV_SCHEMES.length + ")";
+    box.appendChild(sum);
+
+    var hint = document.createElement("p");
+    hint.className = "tnote";
+    hint.textContent = "Tap each one. An https link always opens the browser — only a scheme " +
+      "or intent:// can hand off to the native app.";
+    box.appendChild(hint);
+
+    NAV_SCHEMES.forEach(function (scheme) {
+      var url = scheme.build(data.lat, data.lon, data.name || "");
+      var row = document.createElement("div");
+      row.className = "trow";
+
+      var a = document.createElement("a");
+      a.className = "navbtn"; a.textContent = scheme.label; a.href = url; a.rel = "noopener";
+      row.appendChild(a);
+
+      var note = document.createElement("p");
+      note.className = "tnote"; note.textContent = scheme.note;
+      row.appendChild(note);
+
+      var raw = document.createElement("p");
+      raw.className = "turl"; raw.textContent = url;
+      row.appendChild(raw);
+
+      var copy = mkBtn("Copy this URL", "btn secondary small");
+      copy.onclick = function () { copyText(url, copy); };
+      row.appendChild(copy);
+
+      box.appendChild(row);
+    });
+    return box;
   }
 
   function mkBtn(label, cls) { var b = document.createElement("button"); b.className = cls; b.type = "button"; b.textContent = label; return b; }

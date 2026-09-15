@@ -40,6 +40,9 @@
   <div class="card" id="schemes"></div>
 
 <script>
+/*__INLINE_NAV__*/
+</script>
+<script>
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
@@ -47,24 +50,7 @@
 
   // Candidate launch mechanisms (§9.1/§12). yandexnavi/yandexmaps are expected
   // to FAIL on a China-spec car (apps not installed) — kept here to confirm.
-  var SCHEMES = [
-    { name: "AMap navi (dev=0)", note: "Built-in AMap turn-by-turn; dev=0 = WGS-84 (expected correct outside China).",
-      build: function (la, lo, nm) { return "androidamap://navi?sourceApplication=clip-to-car&poiname=" + enc(nm) + "&lat=" + la + "&lon=" + lo + "&dev=0&style=2"; } },
-    { name: "AMap navi (dev=1)", note: "Same, but dev=1 = GCJ-02. Compare which value lands the pin correctly.",
-      build: function (la, lo, nm) { return "androidamap://navi?sourceApplication=clip-to-car&poiname=" + enc(nm) + "&lat=" + la + "&lon=" + lo + "&dev=1&style=2"; } },
-    { name: "AMap route plan (dev=0)", note: "amapuri route planner to destination, WGS-84.",
-      build: function (la, lo, nm) { return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat=" + la + "&dlon=" + lo + "&dname=" + enc(nm) + "&dev=0&t=0"; } },
-    { name: "AMap route plan (dev=1)", note: "Same, GCJ-02.",
-      build: function (la, lo, nm) { return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat=" + la + "&dlon=" + lo + "&dname=" + enc(nm) + "&dev=1&t=0"; } },
-    { name: "geo: intent", note: "Generic Android geo intent; opens whatever handles geo:.",
-      build: function (la, lo, nm) { return "geo:" + la + "," + lo + "?q=" + la + "," + lo + "(" + enc(nm) + ")"; } },
-    { name: "Yandex Maps web route", note: "Browser fallback — no app needed; best Armenia coverage.",
-      build: function (la, lo) { return "https://yandex.com/maps/?rtext=~" + la + "," + lo + "&rtt=auto"; } },
-    { name: "Yandex Maps web pin", note: "Browser fallback — just drops a pin (whatshere).",
-      build: function (la, lo) { return "https://yandex.com/maps/?whatshere%5Bpoint%5D=" + lo + "," + la + "&whatshere%5Bzoom%5D=17"; } },
-    { name: "yandexnavi:// (expected FAIL)", note: "App not installed on a China-spec car; confirm it does nothing.",
-      build: function (la, lo) { return "yandexnavi://build_route_on_map?lat_to=" + la + "&lon_to=" + lo; } },
-  ];
+  var SCHEMES = NAV_SCHEMES; // shared catalogue, inlined above
 
   function rebuild() {
     var la = $("lat").value.trim(), lo = $("lon").value.trim(), nm = $("name").value.trim();
@@ -72,7 +58,7 @@
     SCHEMES.forEach(function (s) {
       var url = s.build(la, lo, nm);
       var div = document.createElement("div"); div.className = "scheme";
-      var name = document.createElement("div"); name.className = "name"; name.textContent = s.name;
+      var name = document.createElement("div"); name.className = "name"; name.textContent = s.label;
       var u = document.createElement("div"); u.className = "url"; u.textContent = url;
       var a = document.createElement("a"); a.className = "try"; a.textContent = "Try"; a.href = url; a.rel = "noopener";
       var note = document.createElement("div"); note.className = "note"; note.textContent = s.note;
