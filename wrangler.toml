@@ -22,12 +22,24 @@ compatibility_flags = ["nodejs_compat"]
 [build]
 command = "node build.mjs"
 
-# Workers KV: one namespace holds the address (`latest`), the encrypted
-# credential (`vault`), and the transient pairing slots (`pair:<id>`).
-# Create it with `wrangler kv namespace create CLIPBOARD` and paste the id here.
+# Legacy KV namespace. State now lives in the Durable Object below; this
+# binding is retained only so a rollback to the KV implementation is a one-line
+# change. Nothing in the Worker reads or writes it — safe to delete later.
 [[kv_namespaces]]
 binding = "CLIPBOARD"
 id = "e63e906a270a473aba3dedbc5d58bc07"
+
+# Durable Object holding all state (address, vault, pairing slots). KV is
+# eventually consistent, which made cross-device read-after-write take tens of
+# seconds; a single DO instance is strongly consistent. See src/store.js.
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "ClipStore"
+
+# SQLite-backed DO class — this is the variant available on the Workers free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ClipStore"]
 
 # TOKEN (the bearer auth secret) is NOT stored here. Set it as a secret:
 #   npx wrangler secret put TOKEN

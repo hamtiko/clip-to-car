@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SELF, env } from "cloudflare:test";
+import { SELF, env, runInDurableObject } from "cloudflare:test";
 
 const TOKEN = "test-token-123"; // matches vitest.config.js miniflare binding
 const BASE = "https://clip-to-car.test";
@@ -13,6 +13,18 @@ function postJSON(path, body, headers = {}) {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
+  });
+}
+
+function storeStub() {
+  return env.STORE.get(env.STORE.idFromName("clip-to-car"));
+}
+
+// Age a stored record so its TTL has lapsed, without waiting in real time.
+async function expire(key) {
+  await runInDurableObject(storeStub(), async (_inst, state) => {
+    const rec = await state.storage.get(key);
+    if (rec) await state.storage.put(key, { ...rec, expiresAt: Date.now() - 1000 });
   });
 }
 
@@ -68,7 +80,7 @@ describe("address flow (§6)", () => {
   it("latest is empty when nothing is stored", async () => {
     // Establish the precondition explicitly rather than relying on the pool's
     // per-test storage isolation, so the test holds whatever order it runs in.
-    await env.CLIPBOARD.delete("latest");
+    await runInDurableObject(storeStub(), async (_inst, state) => state.storage.deleteAll());
     const data = await (await req("/latest", { headers: authHeaders })).json();
     expect(data).toEqual({ text: null, ts: null });
   });
@@ -124,6 +136,17 @@ describe("vault flow (§6/§7)", () => {
     expect(peek.iv).toBeUndefined();
   });
 
+  it("expires after its TTL without a claim", async () => {
+    await postJSON("/vault", { v: 1, iv: "aXY", ct: "Y3Q" }, authHeaders);
+    expect((await (await req("/vault/peek", { headers: authHeaders })).json()).present).toBe(true);
+
+    // DO storage has no native TTL — we enforce it on read. Age the record.
+    await expire("vault");
+
+    expect((await (await req("/vault/peek", { headers: authHeaders })).json()).present).toBe(false);
+    expect((await (await req("/vault/claim", { headers: authHeaders })).json()).present).toBe(false);
+  });
+
   it("rejects a bad ciphertext body (400)", async () => {
     expect((await postJSON("/vault", { v: 2, iv: "a", ct: "b" }, authHeaders)).status).toBe(400);
     expect((await postJSON("/vault", { v: 1, iv: "", ct: "b" }, authHeaders)).status).toBe(400);
@@ -150,6 +173,12 @@ describe("pairing flow (§5.1 — unauthenticated by design)", () => {
   it("claim for an unknown id returns present:false", async () => {
     const data = await (await postJSON("/pair/claim", { id: "ZZZZZZZZZZZZZZZZZZZZZZ" })).json();
     expect(data.present).toBe(false);
+  });
+
+  it("expires a pairing slot after its TTL", async () => {
+    await postJSON("/pair/put", { id, iv: "aXY", ct: "Y3Q" });
+    await expire(`pair:${id}`);
+    expect((await (await postJSON("/pair/claim", { id })).json()).present).toBe(false);
   });
 
   it("rejects a malformed pair id (400)", async () => {

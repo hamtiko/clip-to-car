@@ -15,6 +15,11 @@ import {
   NAV_BENCHMARK_HTML,
 } from "./generated/pages.js";
 import { looksLikeMapLink, isShortMapLink, parseMapLink } from "./maplink.js";
+import { ClipStore } from "./store.js";
+
+// The Durable Object class must be exported from the Worker entrypoint so the
+// STORE binding in wrangler.toml can resolve it.
+export { ClipStore };
 
 // --- Config knobs (surfaced here per §15) -----------------------------------
 
@@ -24,6 +29,21 @@ const MAX_BODY_BYTES = 8192; // reject oversized POST bodies (§6 validation)
 const SHORT_LINK_TIMEOUT_MS = 4000; // cap on the map short-link redirect fetch
 const PAIR_ID_RE = /^[A-Za-z0-9_-]{22}$/; // 16 random bytes as base64url (no pad)
 const B64U_RE = /^[A-Za-z0-9_-]+$/;
+
+// --- Storage (Durable Object, strongly consistent) --------------------------
+
+// One named instance holds all state, so a write from the phone is visible to
+// the car's very next poll regardless of which PoP each one hits. See
+// src/store.js for why KV was not viable here.
+async function store(env, op, args = {}) {
+  const stub = env.STORE.get(env.STORE.idFromName("clip-to-car"));
+  const res = await stub.fetch("https://store.internal/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ op, ...args }),
+  });
+  return res.json();
+}
 
 // --- Response helpers -------------------------------------------------------
 
@@ -128,18 +148,14 @@ async function handleSet(request, env) {
   const text = body.data && typeof body.data.text === "string" ? body.data.text : null;
   if (text === null || text.trim() === "") return errorRes(400, "empty text");
   const record = await buildLatestRecord(text);
-  await env.CLIPBOARD.put("latest", JSON.stringify(record));
+  await store(env, "setLatest", { record });
   return json({ ok: true });
 }
 
 async function handleLatest(env) {
-  const raw = await env.CLIPBOARD.get("latest");
-  if (!raw) return json({ text: null, ts: null });
-  try {
-    return json(JSON.parse(raw));
-  } catch {
-    return json({ text: null, ts: null });
-  }
+  const { record } = await store(env, "getLatest");
+  if (!record) return json({ text: null, ts: null });
+  return json(record);
 }
 
 async function handleVaultPut(request, env) {
@@ -151,32 +167,21 @@ async function handleVaultPut(request, env) {
   }
   const ttl = Number(env.VAULT_TTL_SECONDS) || DEFAULT_VAULT_TTL_SECONDS;
   const record = { v: 1, iv: d.iv, ct: d.ct, ts: Date.now() };
-  await env.CLIPBOARD.put("vault", JSON.stringify(record), { expirationTtl: ttl });
+  await store(env, "putVault", { record, ttl });
   return json({ ok: true });
 }
 
 async function handleVaultPeek(env) {
-  const raw = await env.CLIPBOARD.get("vault");
-  if (!raw) return json({ present: false, ts: null });
-  try {
-    const rec = JSON.parse(raw);
-    return json({ present: true, ts: rec.ts ?? null });
-  } catch {
-    return json({ present: false, ts: null });
-  }
+  const { record } = await store(env, "peekVault");
+  if (!record) return json({ present: false, ts: null });
+  return json({ present: true, ts: record.ts ?? null });
 }
 
 async function handleVaultClaim(env) {
-  const raw = await env.CLIPBOARD.get("vault");
-  if (!raw) return json({ present: false });
-  // Single-use: delete before returning so a second claim finds nothing.
-  await env.CLIPBOARD.delete("vault");
-  try {
-    const rec = JSON.parse(raw);
-    return json({ present: true, v: 1, iv: rec.iv, ct: rec.ct, ts: rec.ts ?? null });
-  } catch {
-    return json({ present: false });
-  }
+  // Single-use: the store deletes the record as it hands it back.
+  const { record } = await store(env, "claimVault");
+  if (!record) return json({ present: false });
+  return json({ present: true, v: 1, iv: record.iv, ct: record.ct, ts: record.ts ?? null });
 }
 
 async function handlePairPut(request, env) {
@@ -187,7 +192,7 @@ async function handlePairPut(request, env) {
   if (!isNonEmptyB64u(d.iv) || !isNonEmptyB64u(d.ct)) return errorRes(400, "bad payload");
   const ttl = Number(env.PAIR_TTL_SECONDS) || DEFAULT_PAIR_TTL_SECONDS;
   const record = { iv: d.iv, ct: d.ct, ts: Date.now() };
-  await env.CLIPBOARD.put(`pair:${d.id}`, JSON.stringify(record), { expirationTtl: ttl });
+  await store(env, "putPair", { id: d.id, record, ttl });
   return json({ ok: true });
 }
 
@@ -196,16 +201,9 @@ async function handlePairClaim(request, env) {
   if (!body.ok) return errorRes(400, "bad request");
   const d = body.data || {};
   if (typeof d.id !== "string" || !PAIR_ID_RE.test(d.id)) return errorRes(400, "bad id");
-  const key = `pair:${d.id}`;
-  const raw = await env.CLIPBOARD.get(key);
-  if (!raw) return json({ present: false });
-  await env.CLIPBOARD.delete(key); // single-use
-  try {
-    const rec = JSON.parse(raw);
-    return json({ present: true, iv: rec.iv, ct: rec.ct });
-  } catch {
-    return json({ present: false });
-  }
+  const { record } = await store(env, "claimPair", { id: d.id }); // single-use
+  if (!record) return json({ present: false });
+  return json({ present: true, iv: record.iv, ct: record.ct });
 }
 
 // --- Router -----------------------------------------------------------------

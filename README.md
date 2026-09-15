@@ -7,7 +7,8 @@ a big **Copy** button, and one tap puts it on the car's clipboard to paste into 
 navigation or an app's login fields.
 
 Everything is one **Cloudflare Worker** — it serves the pages *and* the JSON API, so there is
-a single deploy, one origin (no CORS), and a generous free tier. Storage is **Workers KV**.
+a single deploy, one origin (no CORS), and a generous free tier. Storage is a single
+**Durable Object** (strongly consistent — see [Why not KV](#why-not-kv)).
 
 > Full design rationale lives in the build plan. This README is the operator's guide:
 > how to deploy it, provision the car, and use it.
@@ -41,7 +42,7 @@ only stores and returns ciphertext.
                                    GET  /vault/claim (auth,1-use)          decrypt in-browser
  Pairing:   /pair page ─POST────►  POST /pair/put            ◄── QR ── car shows QR
                                    POST /pair/claim (1-use)               car decrypts W
-                                   KV: latest · vault · pair:<id>
+                              Durable Object: latest · vault · pair:<id>
 ```
 
 Two independent secrets:
@@ -60,7 +61,8 @@ clip-to-car/
   wrangler.toml          # Worker + KV config
   build.mjs              # inlines shared helpers into pages -> src/generated/pages.js
   src/
-    worker.js            # routing, auth, KV, handlers (the API)
+    worker.js            # routing, auth, handlers (the API)
+    store.js             # ClipStore Durable Object — all persisted state
     crypto.js            # SINGLE source of the base64url + AES-GCM helpers (§8)
     maplink.js           # pure Yandex map-link parser (§9.1)
     qr.js                # vendored QR generator (MIT, no CDN)
@@ -98,6 +100,7 @@ npm install
 npx wrangler login
 
 # 1. Create the KV namespace, then paste the printed id into wrangler.toml (id = "…")
+#    (legacy binding, kept only for rollback — the Worker no longer reads it)
 npx wrangler kv namespace create CLIPBOARD
 
 # 2. Set the auth token (generate a strong one)
@@ -223,6 +226,20 @@ curl -s "$BASE/vault/claim" -H "Authorization: Bearer $TOKEN"; echo   # present:
 - **Car vault view** (`src/pages/vault.html`): `PEEK_POLL_MS`, `CLEAR_MS` (clipboard auto-clear, 20s).
 
 ---
+
+## Why not KV
+
+The first implementation stored everything in Workers KV. It failed in practice: KV is
+**eventually consistent**, and this app is a cross-device read-after-write — the phone writes,
+the car polls — with the two requests landing on different Cloudflare PoPs. Measured on the
+real deployment, a write from the phone took *tens of seconds* to become visible to the car:
+pairing appeared to hang, and the "address shows up in ~3s" promise would have been a minute.
+KV offers no fix — `cacheTtl` has a 60s floor.
+
+A single Durable Object instance is strongly consistent with read-your-writes globally, so a
+write is visible to the very next poll from anywhere. The tradeoff is that all requests reach
+one object's location; for a single-owner tool that is the right trade. DO storage has no
+native TTL, so the vault and pairing slots carry an `expiresAt` enforced on read.
 
 ## Security model (summary)
 
