@@ -6,6 +6,8 @@ import {
   extractUrl,
   parseBareCoords,
   labelFromText,
+  parseCoordsFromHtml,
+  coordHints,
 } from "../src/maplink.js";
 
 // The exact string Yandex Maps puts on the share sheet for a dropped pin.
@@ -88,5 +90,55 @@ describe("parseMapLink (Yandex lon,lat order)", () => {
 
   it("returns null for a non-Yandex URL", () => {
     expect(parseMapLink("https://example.com/?ll=44.5,40.1")).toBeNull();
+  });
+});
+
+
+describe("coordinates from a fetched map page", () => {
+  // Yerevan: lat ~40.19, lon ~44.51. Every strategy must land on that regardless
+  // of the order its own source uses — a swap here puts the pin in another country.
+  const LAT = 40.1914, LON = 44.5152;
+
+  it("reads explicit latitude/longitude keys in either order", () => {
+    expect(parseCoordsFromHtml('{"latitude":40.1914,"longitude":44.5152}'))
+      .toMatchObject({ lat: LAT, lon: LON, via: "latitude/longitude" });
+    expect(parseCoordsFromHtml('{"longitude":44.5152,"latitude":40.1914}'))
+      .toMatchObject({ lat: LAT, lon: LON, via: "longitude/latitude" });
+  });
+
+  it("reads a Yandex ll= as lon,lat", () => {
+    expect(parseCoordsFromHtml('<img src="https://s/?ll=44.5152,40.1914&z=17">'))
+      .toMatchObject({ lat: LAT, lon: LON, via: "ll=" });
+  });
+
+  it("reads GeoJSON coordinates[] as lon,lat", () => {
+    expect(parseCoordsFromHtml('{"coordinates":[44.5152,40.1914]}'))
+      .toMatchObject({ lat: LAT, lon: LON, via: "coordinates[]" });
+  });
+
+  it("reads geo.position as lat;lon", () => {
+    expect(parseCoordsFromHtml('<meta name="geo.position" content="40.1914;44.5152">'))
+      .toMatchObject({ lat: LAT, lon: LON, via: "geo.position" });
+  });
+
+  it("prefers explicit keys over looser matches", () => {
+    const html = '{"coordinates":[1.1111,2.2222]} {"latitude":40.1914,"longitude":44.5152}';
+    expect(parseCoordsFromHtml(html).via).toBe("latitude/longitude");
+  });
+
+  it("returns null when there is nothing usable", () => {
+    expect(parseCoordsFromHtml("<html>no coordinates here</html>")).toBeNull();
+    expect(parseCoordsFromHtml("")).toBeNull();
+    expect(parseCoordsFromHtml(null)).toBeNull();
+  });
+
+  it("rejects out-of-range values rather than guessing", () => {
+    expect(parseCoordsFromHtml('{"latitude":991.1111,"longitude":44.5152}')).toBeNull();
+  });
+
+  it("coordHints surfaces candidate pairs for eyeballing", () => {
+    const hints = coordHints('blah "pos":[44.5152,40.1914] blah');
+    expect(hints.length).toBeGreaterThan(0);
+    expect(hints[0]).toContain("44.5152");
   });
 });

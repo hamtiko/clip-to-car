@@ -23,6 +23,8 @@ import {
   extractUrl,
   parseBareCoords,
   labelFromText,
+  parseCoordsFromHtml,
+  coordHints,
 } from "./maplink.js";
 import { ClipStore } from "./store.js";
 
@@ -35,7 +37,8 @@ export { ClipStore };
 const DEFAULT_VAULT_TTL_SECONDS = 120; // credential lifetime in KV
 const DEFAULT_PAIR_TTL_SECONDS = 120; // pairing-slot lifetime in KV
 const MAX_BODY_BYTES = 8192; // reject oversized POST bodies (§6 validation)
-const SHORT_LINK_TIMEOUT_MS = 4000; // cap on the map short-link redirect fetch
+const SHORT_LINK_TIMEOUT_MS = 6000; // cap on the map short-link redirect fetch
+const MAX_HTML_SCAN = 400000; // how much of a fetched map page to scan for coords
 const PAIR_ID_RE = /^[A-Za-z0-9_-]{22}$/; // 16 random bytes as base64url (no pad)
 const B64U_RE = /^[A-Za-z0-9_-]+$/;
 
@@ -123,21 +126,35 @@ const isNonEmptyB64u = (v) => typeof v === "string" && v.length > 0 && B64U_RE.t
 
 // --- Map-link enrichment (§9.1) ---------------------------------------------
 
-async function expandShortLink(shortUrl) {
+// Follow a map link and return both where it landed and (a capped slice of)
+// the page. Org/place links often carry no coordinates in the expanded URL —
+// they are only in the page body — so we need both.
+async function fetchExpanded(mapUrl) {
   try {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), SHORT_LINK_TIMEOUT_MS);
-    // isShortMapLink() already restricted this to a known Yandex host.
-    const res = await fetch(shortUrl, {
+    // Callers restrict this to a known map host before calling.
+    const res = await fetch(mapUrl, {
       method: "GET",
       redirect: "follow",
       signal: ctl.signal,
-      headers: { "User-Agent": "clip-to-car" },
+      // A real UA: some map pages serve a stub to unknown agents.
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36",
+        "Accept-Language": "en,ru;q=0.8",
+      },
     });
     clearTimeout(timer);
-    return res.url || null;
+    let html = null;
+    try {
+      html = (await res.text()).slice(0, MAX_HTML_SCAN);
+    } catch {
+      /* body unreadable — the final URL may still be enough */
+    }
+    return { finalUrl: res.url || null, html };
   } catch {
-    return null;
+    return { finalUrl: null, html: null };
   }
 }
 
@@ -167,16 +184,37 @@ async function buildLatestRecord(text) {
   }
 
   // 2. Otherwise look for a map URL anywhere in the text (a share is rarely a
-  //    bare URL), expanding a short link when needed.
+  //    bare URL). A short link needs expanding; an org/place link usually keeps
+  //    its coordinates in the page body rather than the URL, so read both.
   const url = extractUrl(text) || text;
   if (!looksLikeMapLink(url)) return record;
+
   let toParse = url;
-  if (isShortMapLink(url)) {
-    const expanded = await expandShortLink(url);
-    if (expanded) toParse = expanded;
+  let html = null;
+  if (isShortMapLink(url) || /\/maps\/org\//.test(url)) {
+    const res = await fetchExpanded(url);
+    if (res.finalUrl) toParse = res.finalUrl;
+    html = res.html;
   }
+
   const place = parseMapLink(toParse);
-  if (place) assignPlace(record, place);
+  if (place) {
+    assignPlace(record, place);
+    return record;
+  }
+
+  // Coordinates only in the page (a named business, say). `via` records which
+  // extractor matched, so a mislocated pin points at the exact strategy.
+  const fromHtml = html ? parseCoordsFromHtml(html) : null;
+  if (fromHtml) {
+    assignPlace(record, {
+      kind: "place",
+      name: labelFromText(text),
+      lat: fromHtml.lat,
+      lon: fromHtml.lon,
+      source: "page:" + fromHtml.via,
+    });
+  }
   return record;
 }
 
@@ -194,6 +232,26 @@ async function handleSet(request, env) {
   const record = await buildLatestRecord(text);
   await store(env, "setLatest", { record });
   return json({ ok: true });
+}
+
+// Diagnostic: resolve a map link and report exactly what could be extracted.
+// Authenticated, and restricted to recognised map hosts — it performs a fetch
+// on our behalf, so it must not be an open relay.
+async function handleResolve(request) {
+  const body = await readJson(request);
+  if (!body.ok) return errorRes(400, body.reason);
+  const u = body.data ? body.data.url : undefined;
+  if (typeof u !== "string" || !looksLikeMapLink(u)) {
+    return errorRes(400, "expected a recognised map url");
+  }
+  const { finalUrl, html } = await fetchExpanded(u);
+  return json({
+    finalUrl,
+    htmlBytes: html ? html.length : 0,
+    fromUrl: finalUrl ? parseMapLink(finalUrl) : null,
+    fromHtml: html ? parseCoordsFromHtml(html) : null,
+    hints: html ? coordHints(html) : [],
+  });
 }
 
 async function handleLatest(env) {
@@ -278,6 +336,7 @@ export default {
     // Authenticated API.
     const authedRoutes =
       (method === "POST" && path === "/set") ||
+      (method === "POST" && path === "/resolve") ||
       (method === "GET" && path === "/latest") ||
       (method === "POST" && path === "/vault") ||
       (method === "GET" && path === "/vault/peek") ||
@@ -286,6 +345,7 @@ export default {
     if (authedRoutes) {
       if (!isAuthed(request, env)) return unauthorized();
       if (path === "/set") return handleSet(request, env);
+      if (path === "/resolve") return handleResolve(request);
       if (path === "/latest") return handleLatest(env);
       if (path === "/vault") return handleVaultPut(request, env);
       if (path === "/vault/peek") return handleVaultPeek(env);

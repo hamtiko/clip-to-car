@@ -123,3 +123,70 @@ export function labelFromText(text) {
     .trim();
   return rest || null;
 }
+
+// --- coordinates from a fetched map page ------------------------------------
+// A place/org share ("Expert 1 Հրաչյա Քոչարի փողոց, 13/4 https://yandex.ru/maps/-/…")
+// carries no coordinates in the text, and the expanded URL for an org link
+// often has no ll=/pt= either — the coordinates live in the page itself.
+//
+// ORDER IS THE HAZARD HERE (we already shipped one lat/lon swap): each strategy
+// declares the convention of its own source, and reports which one matched via
+// `via`, so a pin landing in the wrong place identifies the culprit directly.
+
+function validPair(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
+export function parseCoordsFromHtml(html) {
+  if (typeof html !== "string" || !html) return null;
+
+  // 1. Explicit, unambiguous keys — no convention to get wrong.
+  let m = html.match(/"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?[\s\S]{0,60}?"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?/);
+  if (m) {
+    const p = validPair(Number(m[1]), Number(m[2]));
+    if (p) return { ...p, via: "latitude/longitude" };
+  }
+  m = html.match(/"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?[\s\S]{0,60}?"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?/);
+  if (m) {
+    const p = validPair(Number(m[2]), Number(m[1]));
+    if (p) return { ...p, via: "longitude/latitude" };
+  }
+
+  // 2. A Yandex ll= anywhere in the markup (e.g. a static-map image URL).
+  //    Yandex ll is lon,lat.
+  m = html.match(/[?&]ll=(-?\d{1,3}\.\d+)(?:,|%2C)(-?\d{1,2}\.\d+)/i);
+  if (m) {
+    const p = validPair(Number(m[2]), Number(m[1]));
+    if (p) return { ...p, via: "ll=" };
+  }
+
+  // 3. GeoJSON-style "coordinates":[lon,lat] — GeoJSON is lon,lat.
+  m = html.match(/"coordinates"\s*:\s*\[\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)\s*\]/);
+  if (m) {
+    const p = validPair(Number(m[2]), Number(m[1]));
+    if (p) return { ...p, via: "coordinates[]" };
+  }
+
+  // 4. <meta name="geo.position" content="lat;lon"> — lat first by spec.
+  m = html.match(/geo\.position["'\s][^>]*content=["'](-?\d{1,2}\.\d+)\s*;\s*(-?\d{1,3}\.\d+)/i);
+  if (m) {
+    const p = validPair(Number(m[1]), Number(m[2]));
+    if (p) return { ...p, via: "geo.position" };
+  }
+
+  return null;
+}
+
+// Coordinate-ish snippets, for eyeballing a page none of the strategies match.
+export function coordHints(html, limit = 8) {
+  if (typeof html !== "string") return [];
+  const out = [];
+  const re = /.{0,40}(-?\d{1,3}\.\d{4,})\s*[,;]\s*(-?\d{1,3}\.\d{4,}).{0,40}/g;
+  let m;
+  while ((m = re.exec(html)) !== null && out.length < limit) {
+    out.push(m[0].replace(/\s+/g, " ").trim());
+  }
+  return out;
+}

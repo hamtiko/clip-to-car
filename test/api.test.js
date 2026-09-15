@@ -64,6 +64,10 @@ describe("auth", () => {
     expect((await req("/vault/claim")).status).toBe(401);
   });
 
+  it("requires auth on /resolve", async () => {
+    expect((await postJSON("/resolve", { url: "https://yandex.ru/maps/-/CTxyY83E" })).status).toBe(401);
+  });
+
   it("rejects a wrong token", async () => {
     const res = await req("/latest", { headers: { Authorization: "Bearer nope" } });
     expect(res.status).toBe(401);
@@ -124,6 +128,18 @@ describe("address flow (§6)", () => {
     expect(data.lon).toBeCloseTo(44.5126, 4);
     expect(data.name).toBe("Republic Square");
     expect(data.text).toContain("yandex.com"); // original preserved
+  });
+});
+
+describe("/resolve diagnostic", () => {
+  it("refuses a non-map URL — it must not be an open fetch relay", async () => {
+    const res = await postJSON("/resolve", { url: "https://example.com/" }, authHeaders);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/map url/);
+  });
+
+  it("refuses a missing url", async () => {
+    expect((await postJSON("/resolve", {}, authHeaders)).status).toBe(400);
   });
 });
 

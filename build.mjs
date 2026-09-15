@@ -25,6 +25,7 @@ function inlinable(file) {
     .replace(/^import\s.*$/gm, "");
 }
 
+// buildId() is declared below but hoisted, so pages can interpolate it.
 const CRYPTO = inlinable("crypto.js");
 const QR = inlinable("qr.js");
 const NAV = inlinable("navschemes.js");
@@ -39,7 +40,7 @@ const PAGE_EXPORTS = {
 };
 
 function inlineHelpers(html, name) {
-  let out = html;
+  let out = html.split("__BUILD_ID__").join(buildId());
   if (out.includes("/*__INLINE_CRYPTO__*/")) {
     out = out.replace("/*__INLINE_CRYPTO__*/", () => CRYPTO);
   }
