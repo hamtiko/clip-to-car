@@ -170,16 +170,32 @@ the car browser's data de-authorizes the car (you just re-pair).
 
 Addresses stay plaintext and use a Shortcut (fast, no page to open):
 
-1. **Shortcuts → +** → add **Get Clipboard**.
-2. Add **Get Contents of URL**:
+Build it so it works **both** from the Share Sheet and from the clipboard:
+
+1. **Shortcuts → +**, then open the shortcut's **ⓘ Details**:
+   - Enable **Show in Share Sheet**.
+   - Under **Share Sheet Types**, keep only **Text** and **URLs** (richer types can arrive as
+     objects rather than a string).
+2. The shortcut now starts with **"Receive [Text and URLs] input from Share Sheet"**. Tap
+   **"If there's no input"** and set it to **Get Clipboard**. That one setting makes the same
+   shortcut work from the Share Sheet *and* when launched from the Home Screen or Siri — no
+   `If` block needed. (Don't add a separate *Get Clipboard* action; it would ignore the
+   shared item.)
+3. Add a **Text** action containing the **Shortcut Input** variable. This coerces a shared URL
+   object into a plain string.
+4. Add **Get Contents of URL**:
    - URL: `BASE/set`
    - Method: **POST**
    - Headers: `Authorization` = `Bearer YOUR_TOKEN`, `Content-Type` = `application/json`
-   - Request Body: **JSON** → key `text`, value = the **Clipboard** variable.
-3. (Optional) add **Show Result** to confirm `{"ok":true}`.
-4. Rename it (e.g. "To Car"), add to the Home Screen / Share Sheet, or trigger with Siri.
+   - Request Body: **JSON** → key `text`, value = the **Text** variable from step 3.
+5. (Optional) add **Show Result** to confirm `{"ok":true}`.
+6. Rename it (e.g. "To Car").
 
-Copy an address anywhere → run the Shortcut → it appears on the car within ~3s.
+Now either path works: **share** an address or a map link from any app, or **copy** it and run
+the shortcut. It appears on the car within one poll (~3s).
+
+Sharing a **Yandex Maps link** is the Phase 2 case — the Worker expands and parses it, and the
+car shows the place name + coordinates instead of a raw URL.
 
 > Credentials do **not** go through this Shortcut — iOS Shortcuts can't do AES-GCM. Use the
 > `/send` page, which encrypts in Safari's `crypto.subtle`.
