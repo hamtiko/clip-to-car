@@ -114,6 +114,24 @@ npm run deploy
 Your Worker is now at `https://clip-to-car.<your-subdomain>.workers.dev`. Load it — you should
 see the car page (in pairing mode, since the car has no secret yet).
 
+### Automatic deploys (GitHub Actions)
+
+`.github/workflows/deploy.yml` deploys on every push to `main`, after the test suite passes.
+Docs-only pushes are skipped. You can also run it by hand from the **Actions** tab
+(*Deploy → Run workflow*).
+
+It needs two repository secrets — **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Where to get it |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) → **Create Token** → use the **"Edit Cloudflare Workers"** template → scope it to your account. Copy it immediately; it is shown only once. |
+| `CLOUDFLARE_ACCOUNT_ID` | `npx wrangler whoami`, or the Workers & Pages sidebar in the dashboard. Not secret, but kept out of the repo. |
+
+The Worker's own `TOKEN` secret is **not** managed by CI — `wrangler deploy` never touches
+secrets set with `wrangler secret put`, so it survives every deploy.
+
+Local `npm run deploy` keeps working; use it when you want to push a change without a commit.
+
 ### Generate the encryption KEY (Phase 3)
 
 ```bash
