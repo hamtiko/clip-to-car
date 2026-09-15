@@ -202,6 +202,25 @@ car shows the place name + coordinates instead of a raw URL.
 
 ---
 
+## Troubleshooting
+
+**Read *who* sent the error first — it localizes the fault immediately:**
+
+| What you see | Who answered | Meaning |
+|---|---|---|
+| Cloudflare-branded **HTML** "400 Bad Request" | Cloudflare edge | The request is malformed HTTP. **The Worker never ran.** |
+| **JSON** `{"error":"…"}` | The Worker | The request arrived; the message names the problem. |
+| JSON `{"error":"unauthorized"}` | The Worker | `TOKEN` missing or wrong. |
+
+**iOS Shortcut sends a Cloudflare HTML 400.** Something in the *URL or headers* is malformed —
+the body is not the issue. The classic cause is an **empty header row** in *Get Contents of URL*
+(a blank Key with a blank value): an empty header name is invalid HTTP and the edge rejects it.
+Delete the blank row. Also check the URL field is plain text with no stray variable chips.
+
+**Sharing does nothing / posts the wrong thing.** Restrict the *Receive from Share Sheet* action
+to **Text** and **URLs** only. The default accepts Apps, Files and Images, and a rich object
+shared from another app will not serialize into a usable `text` string.
+
 ## curl smoke tests
 
 ```bash
