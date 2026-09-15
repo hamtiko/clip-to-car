@@ -14,8 +14,8 @@
     "dev": "node build.mjs && wrangler dev"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.5.2",
-    "vitest": "~2.1.9",
-    "wrangler": "^3.78.0"
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.131.2"
   }
 }

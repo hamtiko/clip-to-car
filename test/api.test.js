@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SELF } from "cloudflare:test";
+import { SELF, env } from "cloudflare:test";
 
 const TOKEN = "test-token-123"; // matches vitest.config.js miniflare binding
 const BASE = "https://clip-to-car.test";
@@ -65,7 +65,10 @@ describe("address flow (§6)", () => {
     expect(data.kind).toBeUndefined(); // plain address, not enriched
   });
 
-  it("latest is empty before anything is set", async () => {
+  it("latest is empty when nothing is stored", async () => {
+    // Establish the precondition explicitly rather than relying on the pool's
+    // per-test storage isolation, so the test holds whatever order it runs in.
+    await env.CLIPBOARD.delete("latest");
     const data = await (await req("/latest", { headers: authHeaders })).json();
     expect(data).toEqual({ text: null, ts: null });
   });

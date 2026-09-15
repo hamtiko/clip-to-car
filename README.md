@@ -79,6 +79,18 @@ clip-to-car/
 
 ---
 
+## Prerequisites
+
+- **Node.js 22+** (Wrangler 4 requires `node >=22`; Node 24/26 are fine). npm ships with it.
+  - npm **11+** recommended — npm 10 has an arborist bug that crashes on Vitest 4's peer graph
+    (`Cannot read properties of null (reading 'edgesOut')`). If you hit it, run the install with
+    `npx npm@11 install`.
+- **git**, and a **Cloudflare account** (free tier is plenty: Workers 100k req/day + KV free tier).
+- A **browser** on the machine — `wrangler login` approves via OAuth in the browser.
+
+Wrangler is a devDependency (run via `npx wrangler`) — no global install needed. macOS, Linux and
+Windows all work.
+
 ## Deploy
 
 ```bash
@@ -103,6 +115,13 @@ see the car page (in pairing mode, since the car has no secret yet).
 
 ```bash
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '='    # base64url, no padding
+```
+
+Cross-platform equivalents using the Node you already have (handy on Windows):
+
+```bash
+node -e "console.log(require('crypto').randomBytes(16).toString('hex'))"        # TOKEN
+node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"  # KEY
 ```
 
 Keep `TOKEN` and `KEY` somewhere safe (a password manager). They are **not** stored in the repo.
