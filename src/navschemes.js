@@ -3,171 +3,198 @@
 // SINGLE SOURCE: build.mjs inlines this into both the car page and
 // /nav-benchmark, so the buttons you test are literally the ones that ship.
 //
-// Background, because this is the crux of the whole feature:
+// ON-CAR FINDINGS (XPeng P7+, Xmart OS) — `status` records what the car did:
+//   works   — opened and did the useful thing
+//   partial — opened an app but did not start navigation
+//   fails   — nothing happened
+//   untested
 //
-//  * An https:// link can only ever open a web page. It will never hand off to
-//    a native app. That is why "Open route (Yandex web)" stays in the browser.
-//  * A bare custom scheme (androidamap://…) often does nothing when used as an
-//    <a href> from a page — Chromium blocks or ignores unknown schemes.
-//  * On Android/Chromium the documented, reliable mechanism is intent:// with a
-//    package name, and it supports S.browser_fallback_url so an uninstalled app
-//    degrades to a web page instead of failing silently.
+// What we learned so far:
+//  * geo: works, both bare and intent-wrapped. That is a reliable hook.
+//  * yandexnavi:// OPENS Yandex Navigator — so contrary to the plan's
+//    assumption, Yandex Navigator IS installed on this car. It is the best
+//    target for Armenia. It just did not route, which is a parameter or
+//    delivery problem, not an availability one.
+//  * The AMap intents did nothing, so this head unit is probably not running
+//    AMap (or not under the package names tried).
 //
-// The XPeng runs Xmart OS (Android) with AMap/Gaode built in. Head units ship
-// AMap Auto (com.autonavi.amapauto), which is a DIFFERENT package from the
-// phone app (com.autonavi.minimap) — both are listed here because we do not
-// know which this car has.
+// Working theory for the yandexnavi:// miss: Chromium handling a BARE custom
+// scheme often launches the app's main activity and drops the path and query.
+// The intent:// form carries the full URI, which is why intent→geo worked.
+// Hence the intent-wrapped Yandex variants below.
 //
-// `dev` is AMap's datum flag: dev=0 says the coordinates are already in AMap's
-// GCJ-02 space, dev=1 says they are raw GPS (WGS-84) and should be offset.
-// Outside China no offset should apply, so dev=0 is the likely-correct one —
-// but that is a guess until the car says otherwise, hence both.
+// An https:// link can never hand off to a native app — only a scheme or an
+// intent:// can. That is why the Yandex web route stays in the browser.
 
-const AMAP_PHONE_PKG = "com.autonavi.minimap";
+const YANDEX_NAVI_PKG = "ru.yandex.yandexnavi";
+const YANDEX_MAPS_PKG = "ru.yandex.yandexmaps";
 const AMAP_AUTO_PKG = "com.autonavi.amapauto";
 
 function enc(s) {
   return encodeURIComponent(s || "");
 }
 
-// Yandex web route — no app needed, always opens something. Used as the
-// fallback target for the intent:// variants.
 function yandexWebRoute(lat, lon) {
   return "https://yandex.com/maps/?rtext=~" + lat + "," + lon + "&rtt=auto";
 }
 
 export const NAV_SCHEMES = [
-  // --- browser fallbacks: guaranteed to open, no app required ---------------
-  {
-    id: "yandexWeb",
-    label: "Yandex web route",
-    note: "Opens a route in this browser. No app. Always works — the safety net.",
-    build: function (lat, lon) { return yandexWebRoute(lat, lon); },
-  },
-  {
-    id: "yandexWebPin",
-    label: "Yandex web pin",
-    note: "Drops a pin in this browser instead of routing.",
-    build: function (lat, lon) {
-      return "https://yandex.com/maps/?whatshere%5Bpoint%5D=" + lon + "," + lat + "&whatshere%5Bzoom%5D=17";
-    },
-  },
-
-  // --- Android intent:// — the mechanism most likely to hand off natively ---
-  {
-    id: "intentAmapAutoNavi",
-    label: "intent → AMap Auto (navi, dev=0)",
-    note: "Head-unit AMap via intent. Most likely candidate on a car.",
-    build: function (lat, lon, name) {
-      return "intent://navi?sourceApplication=clip-to-car&poiname=" + enc(name) +
-        "&lat=" + lat + "&lon=" + lon + "&dev=0&style=2" +
-        "#Intent;scheme=androidamap;package=" + AMAP_AUTO_PKG + ";end";
-    },
-  },
-  {
-    id: "intentAmapAutoRoute",
-    label: "intent → AMap Auto (route plan, dev=0)",
-    note: "Head-unit AMap route planner via intent.",
-    build: function (lat, lon, name) {
-      return "intent://route/plan/?sourceApplication=clip-to-car&dlat=" + lat +
-        "&dlon=" + lon + "&dname=" + enc(name) + "&dev=0&t=0" +
-        "#Intent;scheme=amapuri;package=" + AMAP_AUTO_PKG + ";end";
-    },
-  },
-  {
-    id: "intentAmapPhoneNavi",
-    label: "intent → AMap phone app (navi, dev=0)",
-    note: "Same, but the phone-app package. Try if the Auto one does nothing.",
-    build: function (lat, lon, name) {
-      return "intent://navi?sourceApplication=clip-to-car&poiname=" + enc(name) +
-        "&lat=" + lat + "&lon=" + lon + "&dev=0&style=2" +
-        "#Intent;scheme=androidamap;package=" + AMAP_PHONE_PKG + ";end";
-    },
-  },
-  {
-    id: "intentAmapAutoNaviDev1",
-    label: "intent → AMap Auto (navi, dev=1)",
-    note: "Datum check: if dev=0 lands the pin in the wrong place, try this.",
-    build: function (lat, lon, name) {
-      return "intent://navi?sourceApplication=clip-to-car&poiname=" + enc(name) +
-        "&lat=" + lat + "&lon=" + lon + "&dev=1&style=2" +
-        "#Intent;scheme=androidamap;package=" + AMAP_AUTO_PKG + ";end";
-    },
-  },
-  {
-    id: "intentAmapFallback",
-    label: "intent → AMap, web fallback",
-    note: "Opens AMap if present, otherwise falls back to the Yandex web route. " +
-      "The best shape for production once a package name is confirmed.",
-    build: function (lat, lon, name) {
-      return "intent://navi?sourceApplication=clip-to-car&poiname=" + enc(name) +
-        "&lat=" + lat + "&lon=" + lon + "&dev=0&style=2" +
-        "#Intent;scheme=androidamap;package=" + AMAP_AUTO_PKG +
-        ";S.browser_fallback_url=" + enc(yandexWebRoute(lat, lon)) + ";end";
-    },
-  },
+  // --- confirmed working on the car ----------------------------------------
   {
     id: "intentGeo",
-    label: "intent → geo (any map app)",
-    note: "Generic geo intent, no package. Whatever handles maps should answer.",
+    label: "Open in maps (geo intent)",
+    status: "works",
+    note: "CONFIRMED on the car. Generic geo intent, no package — whatever " +
+      "handles maps answers. Shows the point; may not start turn-by-turn.",
     build: function (lat, lon, name) {
       return "intent://" + lat + "," + lon + "?q=" + lat + "," + lon + "(" + enc(name) + ")" +
         "#Intent;scheme=geo;action=android.intent.action.VIEW;end";
     },
   },
-
-  // --- bare custom schemes: may be ignored by the browser -------------------
-  {
-    id: "amapNavi",
-    label: "androidamap:// (navi, dev=0)",
-    note: "Bare scheme, no intent wrapper. Often silently ignored by Chromium.",
-    build: function (lat, lon, name) {
-      return "androidamap://navi?sourceApplication=clip-to-car&poiname=" + enc(name) +
-        "&lat=" + lat + "&lon=" + lon + "&dev=0&style=2";
-    },
-  },
-  {
-    id: "amapViewMap",
-    label: "androidamap:// (viewMap)",
-    note: "Show the point rather than route to it.",
-    build: function (lat, lon, name) {
-      return "androidamap://viewMap?sourceApplication=clip-to-car&poiname=" + enc(name) +
-        "&lat=" + lat + "&lon=" + lon + "&dev=0";
-    },
-  },
-  {
-    id: "amapUriRoute",
-    label: "amapuri:// (route plan, dev=0)",
-    note: "Bare amapuri scheme.",
-    build: function (lat, lon, name) {
-      return "amapuri://route/plan/?sourceApplication=clip-to-car&dlat=" + lat +
-        "&dlon=" + lon + "&dname=" + enc(name) + "&dev=0&t=0";
-    },
-  },
   {
     id: "geo",
-    label: "geo: (bare)",
-    note: "Plain geo: URI with no intent wrapper.",
+    label: "Open in maps (geo:)",
+    status: "works",
+    note: "CONFIRMED on the car. Plain geo: URI, no intent wrapper.",
     build: function (lat, lon, name) {
       return "geo:" + lat + "," + lon + "?q=" + lat + "," + lon + "(" + enc(name) + ")";
     },
   },
   {
-    id: "baidu",
-    label: "baidumap://",
-    note: "Only if this car ships Baidu rather than AMap. Unlikely; cheap to check.",
-    build: function (lat, lon, name) {
-      return "baidumap://map/direction?destination=" + lat + "," + lon +
-        "&destination_name=" + enc(name) + "&mode=driving&coord_type=wgs84";
+    id: "yandexWeb",
+    label: "Route in browser (Yandex web)",
+    status: "works",
+    note: "Opens a route in this browser. No app needed — the safety net.",
+    build: function (lat, lon) { return yandexWebRoute(lat, lon); },
+  },
+
+  // --- Yandex Navigator: installed, but needs the right delivery ------------
+  // These are the highest-value candidates now. Test these first.
+  {
+    id: "intentYandexNaviRoute",
+    label: "① Navigate — Yandex Navigator (intent)",
+    status: "untested",
+    note: "TOP CANDIDATE. Same route request as the bare scheme that only " +
+      "opened the app, but delivered via intent:// with the package, so the " +
+      "path and query actually reach the app.",
+    build: function (lat, lon) {
+      return "intent://build_route_on_map?lat_to=" + lat + "&lon_to=" + lon +
+        "#Intent;scheme=yandexnavi;package=" + YANDEX_NAVI_PKG + ";end";
     },
   },
   {
-    id: "yandexNavi",
-    label: "yandexnavi:// (expected to fail)",
-    note: "Yandex Navigator is not installable on a China-spec car. Confirms " +
-      "what a dead scheme looks like on this browser — useful as a control.",
+    id: "intentYandexNaviRouteFallback",
+    label: "② Navigate — Yandex Navigator (intent + web fallback)",
+    status: "untested",
+    note: "Same as ①, but falls back to the web route if the app is missing. " +
+      "This is the shape to ship if ① works.",
+    build: function (lat, lon) {
+      return "intent://build_route_on_map?lat_to=" + lat + "&lon_to=" + lon +
+        "#Intent;scheme=yandexnavi;package=" + YANDEX_NAVI_PKG +
+        ";S.browser_fallback_url=" + enc(yandexWebRoute(lat, lon)) + ";end";
+    },
+  },
+  {
+    id: "yandexNaviShowPoint",
+    label: "③ Show point — Yandex Navigator (bare)",
+    status: "untested",
+    note: "Different Navigator verb: drop a pin rather than route. If this " +
+      "works where build_route_on_map did not, the verb was the problem.",
+    build: function (lat, lon, name) {
+      return "yandexnavi://show_point_on_map?lat=" + lat + "&lon=" + lon +
+        "&zoom=16&no-balloon=0&desc=" + enc(name);
+    },
+  },
+  {
+    id: "intentYandexNaviShowPoint",
+    label: "④ Show point — Yandex Navigator (intent)",
+    status: "untested",
+    note: "The show_point verb delivered via intent://.",
+    build: function (lat, lon, name) {
+      return "intent://show_point_on_map?lat=" + lat + "&lon=" + lon +
+        "&zoom=16&no-balloon=0&desc=" + enc(name) +
+        "#Intent;scheme=yandexnavi;package=" + YANDEX_NAVI_PKG + ";end";
+    },
+  },
+  {
+    id: "yandexNaviRoute",
+    label: "Navigate — Yandex Navigator (bare scheme)",
+    status: "partial",
+    note: "Opens the app but does NOT start navigation — the query is most " +
+      "likely being dropped. Kept as the baseline this round is fixing.",
     build: function (lat, lon) {
       return "yandexnavi://build_route_on_map?lat_to=" + lat + "&lon_to=" + lon;
+    },
+  },
+
+  // --- Android's standard "start turn-by-turn" request ---------------------
+  {
+    id: "googleNav",
+    label: "⑤ Start navigation (google.navigation:)",
+    status: "untested",
+    note: "The standard Android request for turn-by-turn. Not Google-specific " +
+      "— any navigation app may register for it, and it asks to NAVIGATE " +
+      "rather than just show a point, which geo: does not.",
+    build: function (lat, lon) {
+      return "google.navigation:q=" + lat + "," + lon + "&mode=d";
+    },
+  },
+  {
+    id: "intentGoogleNav",
+    label: "⑥ Start navigation (google.navigation via intent)",
+    status: "untested",
+    note: "Same request, intent-delivered.",
+    build: function (lat, lon) {
+      return "intent://q=" + lat + "," + lon + "&mode=d" +
+        "#Intent;scheme=google.navigation;action=android.intent.action.VIEW;end";
+    },
+  },
+
+  // --- Yandex Maps app (distinct from Navigator) ---------------------------
+  {
+    id: "intentYandexMaps",
+    label: "⑦ Route — Yandex Maps app (intent)",
+    status: "untested",
+    note: "Yandex Maps is a different app from Navigator and may also be " +
+      "installed. Worth one tap.",
+    build: function (lat, lon) {
+      return "intent://maps.yandex.ru/?rtext=~" + lat + "," + lon + "&rtt=auto" +
+        "#Intent;scheme=yandexmaps;package=" + YANDEX_MAPS_PKG + ";end";
+    },
+  },
+  {
+    id: "yandexMapsApp",
+    label: "Route — Yandex Maps app (bare)",
+    status: "untested",
+    note: "Bare yandexmaps:// scheme.",
+    build: function (lat, lon) {
+      return "yandexmaps://maps.yandex.ru/?rtext=~" + lat + "," + lon + "&rtt=auto";
+    },
+  },
+
+  // --- geo variants, in case the working one only shows a pin --------------
+  {
+    id: "geoQuery",
+    label: "⑧ geo: search form (0,0?q=)",
+    status: "untested",
+    note: "The other geo form. Some apps route for this one but only pin for " +
+      "the other. Try if the working geo: buttons do not start navigation.",
+    build: function (lat, lon, name) {
+      return "geo:0,0?q=" + lat + "," + lon + "(" + enc(name) + ")";
+    },
+  },
+
+  // --- AMap: nothing happened on this car ----------------------------------
+  {
+    id: "intentAmapAutoNavi",
+    label: "AMap Auto (intent)",
+    status: "fails",
+    note: "Did nothing on this car — it probably does not run AMap. Kept so " +
+      "the negative result is recorded rather than retried from memory.",
+    build: function (lat, lon, name) {
+      return "intent://navi?sourceApplication=clip-to-car&poiname=" + enc(name) +
+        "&lat=" + lat + "&lon=" + lon + "&dev=0&style=2" +
+        "#Intent;scheme=androidamap;package=" + AMAP_AUTO_PKG + ";end";
     },
   },
 ];

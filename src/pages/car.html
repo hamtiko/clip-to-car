@@ -40,6 +40,11 @@
   .tnote { font-size:13px; color:var(--muted); margin:8px 0 0; }
   .turl { font-size:12px; color:var(--muted); word-break:break-all; margin:6px 0 8px; user-select:text; }
   .btn.small { min-height:44px; font-size:15px; }
+  .badge { display:inline-block; margin-top:8px; font-size:12px; font-weight:700; letter-spacing:.06em;
+           text-transform:uppercase; padding:3px 8px; border-radius:999px; }
+  .badge-works { background:rgba(46,204,113,.18); color:var(--ok); }
+  .badge-partial { background:rgba(255,204,77,.18); color:var(--warn); }
+  .badge-fails { background:rgba(255,107,107,.15); color:var(--err); }
   .muted { color:var(--muted); } .hint { font-size:14px; color:var(--muted); margin-top:14px; text-align:center; }
   .qrwrap { display:flex; flex-direction:column; align-items:center; gap:16px; }
   .qr { width:min(60vw,320px); background:#fff; padding:14px; border-radius:16px; }
@@ -106,17 +111,13 @@
   var PAIR_POLL_MS = 2000;    // /pair/claim poll interval (§5.1)
   var PAIR_MAX_FAILS = 3;     // regenerate QR after this many decrypt failures
 
-  // Ids from the shared NAV_SCHEMES catalogue (src/navschemes.js) to show as
-  // real buttons. Keep this to what the car has actually been seen to honour —
-  // a button that does nothing is worse than no button. The Yandex web route
-  // merely opens a page in this browser, so it is safe by default.
-  //
-  // Everything else stays reachable under "Try all nav schemes" below, which is
-  // how you work out what to add here.
-  var ENABLED_NAV_IDS = ["yandexWeb"];
-
+  // Real buttons are exactly the schemes confirmed on this car (status:"works"
+  // in src/navschemes.js). Marking one as working there promotes it here — no
+  // second list to keep in sync. A button that does nothing is worse than no
+  // button, so nothing unconfirmed is shown by default; the rest stay under
+  // "Try all nav schemes" below, which is how a scheme earns "works".
   function enabledSchemes() {
-    return NAV_SCHEMES.filter(function (s) { return ENABLED_NAV_IDS.indexOf(s.id) !== -1; });
+    return NAV_SCHEMES.filter(function (s) { return s.status === "works"; });
   }
 
   var $ = function (id) { return document.getElementById(id); };
@@ -252,8 +253,9 @@
 
     var hint = document.createElement("p");
     hint.className = "tnote";
-    hint.textContent = "Tap each one. An https link always opens the browser — only a scheme " +
-      "or intent:// can hand off to the native app.";
+    hint.textContent = "Tap each one and note what happens. An https link always opens the " +
+      "browser — only a scheme or intent:// can hand off to a native app. " +
+      "Numbered entries are this round's candidates; try those first.";
     box.appendChild(hint);
 
     NAV_SCHEMES.forEach(function (scheme) {
@@ -264,6 +266,13 @@
       var a = document.createElement("a");
       a.className = "navbtn"; a.textContent = scheme.label; a.href = url; a.rel = "noopener";
       row.appendChild(a);
+
+      if (scheme.status && scheme.status !== "untested") {
+        var badge = document.createElement("span");
+        badge.className = "badge badge-" + scheme.status;
+        badge.textContent = scheme.status;
+        row.appendChild(badge);
+      }
 
       var note = document.createElement("p");
       note.className = "tnote"; note.textContent = scheme.note;
