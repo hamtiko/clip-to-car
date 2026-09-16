@@ -400,9 +400,10 @@ and [access-key signing](https://yandex.ru/dev/navigator/doc/ru/concepts/navigat
 the Play Store — absurd overhead for a personal tool with one user. One-tap navigation into
 Navigator is off the table.
 
-**What ships:** `geo:` as the primary **Open in maps** button. It opens the point in a map and
+**What ships:** `geo:` as the single **Open in maps** button. It opens the point in a map and
 the driver taps **Get directions** once. Tapping twice is a fine price for not shipping an app
-to a store.
+to a store. The Yandex *web* route is not shown — it works, but it routes inside the car's
+browser rather than handing off to a nav app, so it is not something you would drive with.
 
 Every candidate remains recorded in `src/navschemes.js` with what the car actually did, and
 `/nav-benchmark` still renders the full list — so if the situation ever changes, the evidence

@@ -92,8 +92,10 @@ export const NAV_SCHEMES = [
     id: "yandexWeb",
     label: "Route in browser (Yandex web)",
     status: "works",
-    ship: true,
-    note: "Opens a route in this browser. No app needed — the safety net.",
+    // Deliberately NOT shipped: it routes inside the car's browser rather than
+    // handing off to a nav app, so it is not something you would actually drive
+    // with. Kept here as a measured result and for /nav-benchmark.
+    note: "Opens a route in this browser. Works, but stays in the browser.",
     build: function (lat, lon) { return yandexWebRoute(lat, lon); },
   },
 
