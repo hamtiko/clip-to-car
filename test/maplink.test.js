@@ -8,6 +8,7 @@ import {
   labelFromText,
   parseCoordsFromHtml,
   parseCoordsAll,
+  bestPlace,
   coordHints,
 } from "../src/maplink.js";
 
@@ -198,5 +199,80 @@ describe("coordinates from a fetched map page", () => {
     const hints = coordHints('blah "pos":[44.5152,40.1914] blah');
     expect(hints.length).toBeGreaterThan(0);
     expect(hints[0]).toContain("44.5152");
+  });
+});
+
+describe("choosing between the URL's point and the page's point", () => {
+  // The second half of the city-centre bug, and the half the extractor
+  // ordering could not reach: a share expands to an org URL that carries
+  // `ll=` — the map centre — and the old code took it and returned before the
+  // page body was ever read. Real numbers from /maps/org/darfin/178248622617:
+  const ORG = { lat: 40.198572, lon: 44.479231 }; // the place itself
+  const CITY = { lat: 40.177642, lon: 44.512519 }; // Yerevan, ~3.5 km away
+
+  it("flags ll= as a viewport centre, and pinned points as not", () => {
+    const ll = parseMapLink("https://yandex.ru/maps/org/darfin/178248622617/?ll=44.512519,40.177642&z=12");
+    expect(ll.loose).toBe(true);
+    expect(ll.via).toBe("ll");
+    expect(ll.source).toMatch(/map centre/); // traceable in the stored record
+
+    const pinned = parseMapLink("https://yandex.com/maps/?whatshere%5Bpoint%5D=44.479231,40.198572");
+    expect(pinned.loose).toBe(false);
+    expect(parseMapLink("https://yandex.com/maps/?pt=44.479231,40.198572").loose).toBe(false);
+  });
+
+  it("prefers the place in the page over the city centre in the URL", () => {
+    const got = bestPlace({
+      fromUrl: parseMapLink("https://yandex.ru/maps/org/darfin/178248622617/?ll=44.512519,40.177642&z=12"),
+      fromHtml: { ...ORG, via: "data-coordinates", loose: false },
+      label: "Expert 1",
+    });
+    expect(got.lat).toBeCloseTo(ORG.lat, 6);
+    expect(got.lon).toBeCloseTo(ORG.lon, 6);
+    expect(got.source).toBe("page:data-coordinates");
+  });
+
+  it("keeps an explicitly pinned URL point ahead of the page", () => {
+    // whatshere[point] is the point the user asked about; the page's own
+    // record could describe a neighbouring org.
+    const got = bestPlace({
+      fromUrl: parseMapLink("https://yandex.com/maps/?whatshere%5Bpoint%5D=44.479231,40.198572"),
+      fromHtml: { lat: 41.0, lon: 45.0, via: "data-coordinates", loose: false },
+    });
+    expect(got.lat).toBeCloseTo(ORG.lat, 6);
+    expect(got.source).not.toMatch(/^page:/);
+  });
+
+  it("falls back to ll= rather than to a loose page-wide scan", () => {
+    // Neither owns a point. The loose scan is the one that was seen picking up
+    // "region":{"center":[...]} — the user's own view is the better guess.
+    const got = bestPlace({
+      fromUrl: parseMapLink("https://yandex.ru/maps/?ll=44.512519,40.177642&z=17"),
+      fromHtml: { lat: 41.0, lon: 45.0, via: "latitude/longitude (loose)", loose: true },
+    });
+    expect(got.lat).toBeCloseTo(CITY.lat, 6);
+  });
+
+  it("still uses a loose page hit when the URL has no point at all", () => {
+    const got = bestPlace({
+      fromUrl: null,
+      fromHtml: { ...CITY, via: "ll= (map centre, loose)", loose: true },
+    });
+    expect(got.lat).toBeCloseTo(CITY.lat, 6);
+    expect(got.kind).toBe("place");
+  });
+
+  it("labels an org link from the share text, since the URL has no text=", () => {
+    const got = bestPlace({
+      fromUrl: parseMapLink("https://yandex.ru/maps/org/darfin/178248622617/?ll=44.512519,40.177642"),
+      fromHtml: { ...ORG, via: "data-coordinates", loose: false },
+      label: "Expert 1 Հրաչյա Քոչարի փողոց, 13/4",
+    });
+    expect(got.name).toBe("Expert 1 Հրաչյա Քոչարի փողոց, 13/4");
+  });
+
+  it("returns null when neither source produced a point", () => {
+    expect(bestPlace({ fromUrl: null, fromHtml: null })).toBeNull();
+    expect(bestPlace()).toBeNull();
   });
 });

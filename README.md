@@ -268,6 +268,23 @@ Delete the blank row. Also check the URL field is plain text with no stray varia
 to **Text** and **URLs** only. The default accepts Apps, Files and Images, and a rich object
 shared from another app will not serialize into a usable `text` string.
 
+**The pin lands in the wrong place (a city centre, say).** A map page carries several
+coordinates — the place, the district, the city, and the map's viewport centre — and a share
+URL's `ll=` is the *viewport*, not the place. Ask the Worker what it sees:
+
+```bash
+curl -s -X POST "$BASE/resolve" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"url":"<the shared link>"}'
+```
+
+`picked` is what `/set` would store, `candidates` lists every point found in priority order with
+a `loose` flag (`true` = a viewport or region guess, not the place), and `hints` shows raw
+coordinate-ish snippets for a page nothing matched. The stored record's `source` names the
+strategy that produced the pin, so a wrong one is traceable without re-running anything.
+
+Note that enrichment happens **when the text is sent**, so a record already on the car keeps the
+coordinates it was stored with — re-share the link to re-resolve it.
+
 ## curl smoke tests
 
 ```bash

@@ -51,19 +51,36 @@ function parseLonLat(pair) {
   return { lat, lon };
 }
 
+// URL params that can carry a point, best first. All are lon,lat.
+//
+// `ll=` is the MAP VIEWPORT CENTRE, not the place — on a link shared from a
+// zoomed-out view that IS the city centre, which is the exact bug this ordering
+// exists to prevent. So it is flagged `loose`: usable when nothing better
+// exists, never in preference to a point the place actually owns.
+const URL_POINT_PARAMS = [
+  { param: "whatshere[point]", loose: false }, // the point the user asked about
+  { param: "pt", loose: false }, // an explicitly placed pin
+  { param: "ll", loose: true }, // where the map happened to be centred
+];
+
 // Parse an (already-expanded) Yandex Maps URL into a place, or null if it has
 // no usable coordinates (e.g. an org/place link that needs a geocoder).
+// `loose` says the coordinates describe the view rather than the place, so the
+// caller can prefer a page-body hit over them.
 export function parseMapLink(text) {
   const url = safeUrl(text);
   if (!url || !isYandexHost(url)) return null;
   const q = url.searchParams;
 
-  // Coordinates, in priority order. All are lon,lat.
-  const coords =
-    parseLonLat(q.get("whatshere[point]")) ||
-    parseLonLat(q.get("pt")) ||
-    parseLonLat(q.get("ll"));
-  if (!coords) return null;
+  let hit = null;
+  for (const p of URL_POINT_PARAMS) {
+    const coords = parseLonLat(q.get(p.param));
+    if (coords) {
+      hit = { ...coords, via: p.param, loose: p.loose };
+      break;
+    }
+  }
+  if (!hit) return null;
 
   // Place name: `text=` is the human label; fall back to `whatshere[]`.
   const name = (q.get("text") || q.get("whatshere") || "").trim() || null;
@@ -71,10 +88,49 @@ export function parseMapLink(text) {
   return {
     kind: "place",
     name,
-    lat: coords.lat,
-    lon: coords.lon,
-    source: url.hostname,
+    lat: hit.lat,
+    lon: hit.lon,
+    via: hit.via,
+    loose: hit.loose,
+    source: hit.loose ? url.hostname + " (map centre)" : url.hostname,
   };
+}
+
+// Choose between the point the URL carries and the point the page body carries.
+//
+// THIS IS THE CITY-CENTRE FIX. Both sources can answer, and the tempting order
+// — URL first, it is already parsed and needs no page — is the wrong one: a
+// share's `ll=` is wherever the map was pointing, so an org link made from a
+// zoomed-out view resolves to the city. Rank by how tightly each source is
+// bound to the place instead, and only fall back to the loose ones when
+// nothing owns a point.
+//
+// `label` is the human text from the share, used when the URL carries no
+// `text=` of its own (org links never do).
+export function bestPlace({ fromUrl = null, fromHtml = null, label = null } = {}) {
+  const htmlPlace = fromHtml
+    ? {
+        kind: "place",
+        name: label,
+        lat: fromHtml.lat,
+        lon: fromHtml.lon,
+        loose: !!fromHtml.loose,
+        // `via` rides along so a mislocated pin names the strategy that
+        // produced it, without having to re-run the fetch.
+        source: "page:" + fromHtml.via,
+      }
+    : null;
+
+  const best =
+    (fromUrl && !fromUrl.loose ? fromUrl : null) ||
+    (htmlPlace && !htmlPlace.loose ? htmlPlace : null) ||
+    // Nothing owns a point. Prefer the user's own view over a page-wide scan,
+    // which we have watched pick up the surrounding region.
+    fromUrl ||
+    htmlPlace;
+
+  if (!best) return null;
+  return { ...best, name: best.name || label };
 }
 
 // --- free-text shares -------------------------------------------------------

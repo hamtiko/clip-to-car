@@ -25,6 +25,7 @@ import {
   parseBareCoords,
   labelFromText,
   parseCoordsFromHtml,
+  bestPlace,
   parseCoordsAll,
   coordHints,
 } from "./maplink.js";
@@ -203,24 +204,15 @@ async function buildLatestRecord(text) {
     html = res.html;
   }
 
-  const place = parseMapLink(toParse);
-  if (place) {
-    assignPlace(record, place);
-    return record;
-  }
-
-  // Coordinates only in the page (a named business, say). `via` records which
-  // extractor matched, so a mislocated pin points at the exact strategy.
-  const fromHtml = html ? parseCoordsFromHtml(html) : null;
-  if (fromHtml) {
-    assignPlace(record, {
-      kind: "place",
-      name: labelFromText(text),
-      lat: fromHtml.lat,
-      lon: fromHtml.lon,
-      source: "page:" + fromHtml.via,
-    });
-  }
+  // 3. Rank the candidates. Both the URL and the page body can answer, and
+  //    which one is right is not obvious — see bestPlace(), where the ordering
+  //    and the reasoning behind it live under test.
+  const best = bestPlace({
+    fromUrl: parseMapLink(toParse),
+    fromHtml: html ? parseCoordsFromHtml(html) : null,
+    label: labelFromText(text),
+  });
+  if (best) assignPlace(record, best);
   return record;
 }
 
@@ -272,6 +264,13 @@ async function handleResolve(request) {
     htmlBytes: html ? html.length : 0,
     fromUrl: finalUrl ? parseMapLink(finalUrl) : null,
     fromHtml: html ? parseCoordsFromHtml(html) : null,
+    // What /set would actually store for this link — the point the car shows.
+    // Without this the diagnostic listed evidence but not the verdict, which
+    // is the one thing you want to check after changing the ranking.
+    picked: bestPlace({
+      fromUrl: finalUrl ? parseMapLink(finalUrl) : null,
+      fromHtml: html ? parseCoordsFromHtml(html) : null,
+    }),
     // Every candidate, in priority order — a map page carries the place, the
     // city and the viewport centre, so seeing them side by side is what tells
     // us whether the winner is the right one.
