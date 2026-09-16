@@ -21,7 +21,7 @@ a single deploy, one origin (no CORS), and a generous free tier. Storage is a si
 |------|------|--------|
 | 1 | **Address hand-off** — phone → car, plaintext, persists | ✅ **live on the car** |
 | 1.5 | **QR pairing** — provision the car without typing secrets | ✅ **live on the car** |
-| 2 | **Map link → place** — resolve a Yandex share to name + coords, open in maps | ✅ **live on the car** (one-tap nav ruled out — [why](#why-one-tap-navigation-doesnt-work-and-what-would-fix-it)) |
+| 2 | **Map link → place** — resolve a Yandex share to name + coords, open in maps | ✅ **live on the car** (one-tap nav ruled out — [why](#why-one-tap-navigation-doesnt-work)) |
 | 3 | **Encrypted credentials** — E2E-encrypted, single-use, TTL, auto-clear | ✅ built & tested, **not yet exercised live** |
 
 The server never sees credential plaintext, the encryption `KEY`, or the pairing key `W` — it
