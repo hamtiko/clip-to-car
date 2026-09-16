@@ -144,14 +144,26 @@ describe("coordinates from a fetched map page", () => {
   // ordering by how tightly a source is bound to the entity, not by how
   // explicit its key names look.
   it("picks the place, not the city centre, when a page mentions both", () => {
+    // Fragments taken verbatim from the live /maps/org/darfin/178248622617
+    // page via POST /resolve, which is where this was reported.
+    //   org   40.198572, 44.479231  (data-coordinates, and the map is centred
+    //                                on it: "mapLocation":{"center":[44.479201,
+    //                                40.198621]} — independent corroboration)
+    //   city  40.177642, 44.512519  (Yerevan, as "region":{"center":[...]})
+    // about 3.5 km apart. The city pair used to win because extractor priority,
+    // not document position, decided — and the loose scan ranked first.
     const page =
-      '{"city":{"latitude":40.1792,"longitude":44.4991}}' +      // city first...
-      '<img src="/s?ll=44.4991,40.1792&z=12">' +                  // ...and the viewport
-      '<div data-coordinates="44.498490,40.200207">';             // the actual place
+      '{"longitude":44.512519,"latitude":40.177642}' +                    // Yerevan
+      'aWQ9MTc4MjQ4NjIyNjE3" data-coordinates="44.479231,40.198572">' +   // the org
+      '<meta itemProp="image" content="https://...">';
     const got = parseCoordsFromHtml(page);
     expect(got.via).toBe("data-coordinates");
-    expect(got.lat).toBeCloseTo(40.200207, 6);
-    expect(got.lon).toBeCloseTo(44.498490, 6);
+    expect(got.lat).toBeCloseTo(40.198572, 6);
+    expect(got.lon).toBeCloseTo(44.479231, 6);
+
+    // And the city centre is still found — just demoted, not discarded.
+    const all = parseCoordsAll(page);
+    expect(all.some((c) => c.loose && Math.abs(c.lat - 40.177642) < 1e-6)).toBe(true);
   });
 
   it("an entity-anchored geo{} beats a loose pair earlier in the page", () => {
