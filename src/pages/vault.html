@@ -84,6 +84,8 @@
   function fatal(text) { $("fatal").hidden = false; $("waiting").hidden = true; $("revealed").hidden = true; $("fatalMsg").textContent = text; dot.className = "dot err"; statusEl.textContent = "Error"; }
 
   if (!token || !key) { fatal("Missing token or key — open the car vault bookmark, or pair the car first."); return; }
+  var keyIssue = keyProblem(key);
+  if (keyIssue) { fatal("This car's key won't work: " + keyIssue + ". Re-pair the car with a valid key."); return; }
 
   // --- peek loop (does not consume) ------------------------------------------
   $("waiting").hidden = false;
@@ -108,7 +110,10 @@
       .then(function (data) {
         if (!data.present) { $("reveal").disabled = false; $("waitMsg").textContent = "Nothing waiting"; $("reveal").hidden = true; statusEl.textContent = "Live"; return; }
         return decryptJSON(key, data.iv, data.ct).then(showCredential).catch(function () {
-          fatal("Couldn't decrypt — key mismatch. The item has been consumed; send it again.");
+          // The key is well-formed (checked on load), so this really is a
+          // mismatch: the phone encrypted under a different key.
+          fatal("Couldn't decrypt — this car's key does not match the one the phone " +
+                "encrypted with. The item has been consumed; fix the keys and send it again.");
         });
       })
       .catch(function (e) { fatal(e && e.message ? e.message : "Reveal failed."); });

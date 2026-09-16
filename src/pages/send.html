@@ -67,6 +67,12 @@
   if (!token || !key) {
     say("Missing token or key. Open this page from your saved sender bookmark (…/send#t=TOKEN&k=KEY).", "err");
     sendBtn.disabled = true;
+  } else {
+    var keyIssue = keyProblem(key);
+    if (keyIssue) {
+      say("This phone's key won't work: " + keyIssue, "err");
+      sendBtn.disabled = true;
+    }
   }
 
   $("pasteBtn").onclick = function () {

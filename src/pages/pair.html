@@ -87,6 +87,10 @@
     if (!$("needSecrets").hidden) {
       t = $("tok").value.trim(); k = $("key").value.trim();
       if (!t || !k) { say("Enter both the token and the key.", "err"); return; }
+      // Catch a malformed key HERE — otherwise it is stored on the car and only
+      // fails much later, at the point of revealing a credential.
+      var problem = keyProblem(k);
+      if (problem) { say("That key won't work: " + problem, "err"); return; }
       if ($("remember").checked) {
         safeLS(function () { localStorage.setItem("ctc.token", t); localStorage.setItem("ctc.key", k); });
       }

@@ -6,6 +6,7 @@ import {
   genKeyB64u,
   encryptJSON,
   decryptJSON,
+  keyProblem,
 } from "../src/crypto.js";
 
 describe("base64url", () => {
@@ -82,5 +83,38 @@ describe("AES-GCM JSON (plan §8 wire format)", () => {
 
   it("rejects a key that is not 32 bytes", async () => {
     await expect(encryptJSON(b64uEncode(randomBytes(16)), {})).rejects.toBeTruthy();
+  });
+});
+
+
+describe("keyProblem (pre-flight KEY validation)", () => {
+  // The pairing form accepts free text, so a mistyped KEY used to reach the car
+  // and only fail later as "couldn't decrypt" — which reads as a mismatch and
+  // points at the wrong bug. Every entry point now checks up front.
+  it("accepts a real 256-bit key", () => {
+    expect(keyProblem(genKeyB64u())).toBeNull();
+    expect(keyProblem(randomBytes(32))).toBeNull();
+  });
+
+  it("rejects a missing key", () => {
+    expect(keyProblem("")).toMatch(/no key/);
+    expect(keyProblem(null)).toMatch(/no key/);
+  });
+
+  it("rejects a key of the wrong length, and says what to do", () => {
+    const msg = keyProblem("hunter2");
+    expect(msg).toMatch(/32 bytes/);
+    expect(msg).toMatch(/openssl rand/); // actionable, not just a complaint
+    expect(keyProblem(b64uEncode(randomBytes(16)))).toMatch(/is 16/);
+  });
+
+  it("agrees with what encryptJSON will actually accept", async () => {
+    const good = genKeyB64u();
+    expect(keyProblem(good)).toBeNull();
+    await expect(encryptJSON(good, { a: 1 })).resolves.toBeTruthy();
+
+    const bad = b64uEncode(randomBytes(16));
+    expect(keyProblem(bad)).toBeTruthy();
+    await expect(encryptJSON(bad, { a: 1 })).rejects.toBeTruthy();
   });
 });

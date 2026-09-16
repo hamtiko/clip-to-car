@@ -58,6 +58,25 @@ async function importKey(key, usage) {
   return crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, usage);
 }
 
+// Why a key is unusable, or null if it is fine. Callers check this BEFORE
+// encrypting so a malformed key is reported as such, rather than surfacing
+// later as "couldn't decrypt", which reads as a mismatch and sends you looking
+// for the wrong bug.
+export function keyProblem(key) {
+  if (!key) return "no key set";
+  let bytes;
+  try {
+    bytes = typeof key === "string" ? b64uDecode(key) : new Uint8Array(key);
+  } catch (e) {
+    return "key is not valid base64url";
+  }
+  if (bytes.length !== 32) {
+    return "key must be 32 bytes (256-bit), this one is " + bytes.length +
+      " — generate one with: openssl rand -base64 32 | tr '+/' '-_' | tr -d '='";
+  }
+  return null;
+}
+
 // --- AES-GCM over JSON ------------------------------------------------------
 
 // Encrypt a JS value as JSON. Returns the wire object { v:1, iv, ct } with
