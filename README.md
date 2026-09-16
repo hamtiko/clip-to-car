@@ -367,13 +367,37 @@ than in memory. Schemes marked `works` are promoted to real buttons automaticall
 | AMap (`androidamap`/`amapuri`, both packages) | ❌ Nothing — this car does not appear to run AMap |
 | Yandex web route | ✅ Always opens (in the browser, by definition) |
 
-**Notably, Yandex Navigator IS installed** — the plan assumed it could not be on a China-spec
-car. That makes it the best target for Armenia.
+| `google.navigation:` (bare and intent) | ❌ Nothing registers for it |
+| Yandex **Maps** app (`yandexmaps://`) | ❌ Nothing — Maps is not installed; **Navigator** is |
 
-**Still open: navigation that starts without a second tap.** `geo:` only asks a map app to
-*display* a point. The untested candidates aimed at this are numbered in the UI: Yandex
-Navigator via `intent://` (a bare custom scheme appears to drop its query, which would explain
-the app opening without routing), and `google.navigation:`, Android's standard request to start
-turn-by-turn. Open `BASE/nav-benchmark` on the car, or expand **Try all nav schemes** under any
-place, and tap the numbered entries.
+**Yandex Navigator IS installed** — the plan assumed no Yandex app could be present on a
+China-spec car. Note Navigator and Yandex Maps are *different apps*; only Navigator is here.
+
+### Why one-tap navigation doesn't work (and what would fix it)
+
+Every Navigator command failed — bare and `intent://`-wrapped, route and show-point. The
+syntax is not the problem; it matches Yandex's published scheme exactly.
+
+The cause is that **Yandex requires third-party launches to be signed with an access key**:
+
+```
+yandexnavi://<path>?<params>&client=<client id>&signature=<signature>
+```
+
+Unsigned launches are restricted from Navigator 2.40 onward (reportedly ~5 per device per
+day), which is precisely the observed behaviour: the app opens and the command is discarded.
+See Yandex's [commercial-use terms](https://yandex.ru/dev/navigator/doc/ru/concepts/navigator-commercial-use)
+and [access-key signing](https://yandex.ru/dev/navigator/doc/ru/concepts/navigator-commercial-use-signature).
+
+**If you obtain an access key**, the signature can be computed **in the Worker** — the key
+would live as a Worker secret alongside `TOKEN` and never reach the car, which already fits
+the architecture. That is the only route to true one-tap navigation into Navigator.
+
+**One caveat on the evidence:** the unsigned quota is per device per day, and a benchmarking
+session taps many Navigator links in a row. Some of those failures may be a spent quota rather
+than a rejected command. Worth one retest on a fresh day, tapping the Navigator route entry
+**first and nothing else** — if it works, ~5 navigations/day may be enough for personal use.
+
+**What ships today:** `geo:`, which opens the point in a map; starting the drive is one more
+tap on **Get directions**.
 ```

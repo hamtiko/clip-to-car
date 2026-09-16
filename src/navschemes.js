@@ -9,22 +9,41 @@
 //   fails   — nothing happened
 //   untested
 //
-// What we learned so far:
-//  * geo: works, both bare and intent-wrapped. That is a reliable hook.
-//  * yandexnavi:// OPENS Yandex Navigator — so contrary to the plan's
-//    assumption, Yandex Navigator IS installed on this car. It is the best
-//    target for Armenia. It just did not route, which is a parameter or
-//    delivery problem, not an availability one.
-//  * The AMap intents did nothing, so this head unit is probably not running
-//    AMap (or not under the package names tried).
+// WHAT WE LEARNED, in order:
 //
-// Working theory for the yandexnavi:// miss: Chromium handling a BARE custom
-// scheme often launches the app's main activity and drops the path and query.
-// The intent:// form carries the full URI, which is why intent→geo worked.
-// Hence the intent-wrapped Yandex variants below.
+//  1. geo: works — bare, intent-wrapped, and the 0,0?q= form. It opens a map at
+//     the point, but geo: only asks to DISPLAY a location, so the driver still
+//     taps "Get directions". This is what ships.
 //
-// An https:// link can never hand off to a native app — only a scheme or an
-// intent:// can. That is why the Yandex web route stays in the browser.
+//  2. Yandex NAVIGATOR is installed (not Yandex Maps — different apps). The
+//     plan assumed no Yandex app could be present on a China-spec car; wrong.
+//
+//  3. Every Navigator command failed, bare and intent-wrapped, route and
+//     show-point. The syntax is not the problem: it matches Yandex's published
+//     scheme exactly (yandexnavi://build_route_on_map?lat_to=&lon_to=, and
+//     show_point_on_map?lat=&lon=&zoom=).
+//
+//     THE REASON: Yandex requires third-party launches to be SIGNED with an
+//     access key —
+//         yandexnavi://<path>?<params>&client=<client id>&signature=<sig>
+//     Unsigned launches are restricted from Navigator 2.40 onward (reportedly
+//     ~5 per device per day). That is exactly the observed behaviour: the app
+//     opens, the command is discarded.
+//
+//     Docs: https://yandex.ru/dev/navigator/doc/ru/concepts/navigator-commercial-use
+//           https://yandex.ru/dev/navigator/doc/ru/concepts/navigator-commercial-use-signature
+//
+//     To get true one-tap navigation, an access key must be obtained from
+//     Yandex. The signature could then be computed IN THE WORKER, so the key
+//     never reaches the car — see the README.
+//
+//     CAVEAT ON THE EVIDENCE: the unsigned quota is per device per day, and a
+//     benchmarking session taps many Navigator links in a row. Some of those
+//     failures may be a spent quota rather than a rejected command. Worth one
+//     retest on a fresh day, tapping ① FIRST and nothing else.
+//
+//  4. AMap did nothing under either package name — this car does not run it.
+//  5. google.navigation: did nothing, so nothing here registers for it.
 
 const YANDEX_NAVI_PKG = "ru.yandex.yandexnavi";
 const YANDEX_MAPS_PKG = "ru.yandex.yandexmaps";
@@ -72,11 +91,11 @@ export const NAV_SCHEMES = [
   // These are the highest-value candidates now. Test these first.
   {
     id: "intentYandexNaviRoute",
-    label: "① Navigate — Yandex Navigator (intent)",
-    status: "untested",
-    note: "TOP CANDIDATE. Same route request as the bare scheme that only " +
-      "opened the app, but delivered via intent:// with the package, so the " +
-      "path and query actually reach the app.",
+    label: "Navigate — Yandex Navigator (intent, unsigned)",
+    status: "fails",
+    note: "Correct per Yandex's published scheme, but UNSIGNED. Navigator " +
+      "restricts unsigned third-party launches, which is why the app opens " +
+      "and the route request is discarded. Needs &client=&signature=.",
     build: function (lat, lon) {
       return "intent://build_route_on_map?lat_to=" + lat + "&lon_to=" + lon +
         "#Intent;scheme=yandexnavi;package=" + YANDEX_NAVI_PKG + ";end";
@@ -84,8 +103,8 @@ export const NAV_SCHEMES = [
   },
   {
     id: "intentYandexNaviRouteFallback",
-    label: "② Navigate — Yandex Navigator (intent + web fallback)",
-    status: "untested",
+    label: "Navigate — Yandex Navigator (intent + web fallback)",
+    status: "fails",
     note: "Same as ①, but falls back to the web route if the app is missing. " +
       "This is the shape to ship if ① works.",
     build: function (lat, lon) {
@@ -96,8 +115,8 @@ export const NAV_SCHEMES = [
   },
   {
     id: "yandexNaviShowPoint",
-    label: "③ Show point — Yandex Navigator (bare)",
-    status: "untested",
+    label: "Show point — Yandex Navigator (bare)",
+    status: "fails",
     note: "Different Navigator verb: drop a pin rather than route. If this " +
       "works where build_route_on_map did not, the verb was the problem.",
     build: function (lat, lon, name) {
@@ -107,8 +126,8 @@ export const NAV_SCHEMES = [
   },
   {
     id: "intentYandexNaviShowPoint",
-    label: "④ Show point — Yandex Navigator (intent)",
-    status: "untested",
+    label: "Show point — Yandex Navigator (intent)",
+    status: "fails",
     note: "The show_point verb delivered via intent://.",
     build: function (lat, lon, name) {
       return "intent://show_point_on_map?lat=" + lat + "&lon=" + lon +
@@ -130,8 +149,8 @@ export const NAV_SCHEMES = [
   // --- Android's standard "start turn-by-turn" request ---------------------
   {
     id: "googleNav",
-    label: "⑤ Start navigation (google.navigation:)",
-    status: "untested",
+    label: "Start navigation (google.navigation:)",
+    status: "fails",
     note: "The standard Android request for turn-by-turn. Not Google-specific " +
       "— any navigation app may register for it, and it asks to NAVIGATE " +
       "rather than just show a point, which geo: does not.",
@@ -141,8 +160,8 @@ export const NAV_SCHEMES = [
   },
   {
     id: "intentGoogleNav",
-    label: "⑥ Start navigation (google.navigation via intent)",
-    status: "untested",
+    label: "Start navigation (google.navigation via intent)",
+    status: "fails",
     note: "Same request, intent-delivered.",
     build: function (lat, lon) {
       return "intent://q=" + lat + "," + lon + "&mode=d" +
@@ -153,8 +172,8 @@ export const NAV_SCHEMES = [
   // --- Yandex Maps app (distinct from Navigator) ---------------------------
   {
     id: "intentYandexMaps",
-    label: "⑦ Route — Yandex Maps app (intent)",
-    status: "untested",
+    label: "Route — Yandex Maps app (intent)",
+    status: "fails",
     note: "Yandex Maps is a different app from Navigator and may also be " +
       "installed. Worth one tap.",
     build: function (lat, lon) {
@@ -165,7 +184,7 @@ export const NAV_SCHEMES = [
   {
     id: "yandexMapsApp",
     label: "Route — Yandex Maps app (bare)",
-    status: "untested",
+    status: "fails",
     note: "Bare yandexmaps:// scheme.",
     build: function (lat, lon) {
       return "yandexmaps://maps.yandex.ru/?rtext=~" + lat + "," + lon + "&rtt=auto";
@@ -175,8 +194,8 @@ export const NAV_SCHEMES = [
   // --- geo variants, in case the working one only shows a pin --------------
   {
     id: "geoQuery",
-    label: "⑧ geo: search form (0,0?q=)",
-    status: "untested",
+    label: "Open in maps (geo: 0,0?q= form)",
+    status: "works",
     note: "The other geo form. Some apps route for this one but only pin for " +
       "the other. Try if the working geo: buttons do not start navigation.",
     build: function (lat, lon, name) {
