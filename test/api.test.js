@@ -46,6 +46,16 @@ describe("pages", () => {
     expect(typeof v.builtAt).toBe("string");
   });
 
+  it("serves an installable iOS Shortcut with the URL baked in and no secret", async () => {
+    const res = await req("/shortcut");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toMatch(/x-shortcut/);
+    const plist = await res.text();
+    expect(plist).toContain("WFWorkflowImportQuestions"); // asks for the TOKEN
+    expect(plist).toContain(BASE + "/set");
+    expect(plist).not.toContain(TOKEN); // the token is never in the file
+  });
+
   it("serves /send, /pair, /vault-view, /nav-benchmark", async () => {
     for (const p of ["/send", "/pair", "/vault-view", "/nav-benchmark"]) {
       const res = await req(p);
@@ -96,6 +106,38 @@ describe("address flow (§6)", () => {
     await runInDurableObject(storeStub(), async (_inst, state) => state.storage.deleteAll());
     const data = await (await req("/latest", { headers: authHeaders })).json();
     expect(data).toEqual({ text: null, ts: null });
+  });
+
+  it("accepts a raw text/plain body (what the iOS Shortcut posts)", async () => {
+    const res = await req("/set", {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "text/plain; charset=utf-8" },
+      body: "Republic Square, Yerevan",
+    });
+    expect(res.status).toBe(200);
+    const data = await (await req("/latest", { headers: authHeaders })).json();
+    expect(data.text).toBe("Republic Square, Yerevan");
+  });
+
+  it("still enriches a shared place posted as plain text", async () => {
+    await req("/set", {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "text/plain" },
+      body: "Կետը քարտեզի վրա 40.204753,44.542365 https://yandex.ru/maps/-/CTxeFV-J",
+    });
+    const data = await (await req("/latest", { headers: authHeaders })).json();
+    expect(data.kind).toBe("place");
+    expect(data.lat).toBeCloseTo(40.204753, 6);
+  });
+
+  it("a JSON Content-Type with a broken body still reports the JSON error", async () => {
+    const res = await req("/set", {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/not valid JSON/);
   });
 
   it("rejects empty / whitespace text (400 empty text)", async () => {

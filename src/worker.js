@@ -28,6 +28,7 @@ import {
   coordHints,
 } from "./maplink.js";
 import { ClipStore } from "./store.js";
+import { buildShortcutPlist } from "./shortcut.js";
 
 // The Durable Object class must be exported from the Worker entrypoint so the
 // STORE binding in wrangler.toml can resolve it.
@@ -225,13 +226,29 @@ async function buildLatestRecord(text) {
 // --- Route handlers ---------------------------------------------------------
 
 async function handleSet(request, env) {
-  const body = await readJson(request);
-  if (!body.ok) return errorRes(400, body.reason);
-  const raw = body.data ? body.data.text : undefined;
-  if (typeof raw !== "string") {
-    return errorRes(400, 'expected a "text" field holding a string');
+  // Two accepted body shapes. JSON {"text": "..."} is the documented one; a
+  // raw text/plain body is accepted because it makes the iOS Shortcut far
+  // simpler — Shortcuts can post a variable directly as the body, where a
+  // nested JSON field needs a much more fragile configuration.
+  const ctype = (request.headers.get("Content-Type") || "").toLowerCase();
+  const wantsJson = ctype.includes("json");
+
+  let text;
+  if (wantsJson) {
+    const body = await readJson(request);
+    if (!body.ok) return errorRes(400, body.reason);
+    const raw = body.data ? body.data.text : undefined;
+    if (typeof raw !== "string") {
+      return errorRes(400, 'expected a "text" field holding a string');
+    }
+    text = raw;
+  } else {
+    // No/!JSON Content-Type: the body itself is the value.
+    text = await request.text();
+    if (text.length > MAX_BODY_BYTES) {
+      return errorRes(400, "body too large (max " + MAX_BODY_BYTES + " bytes)");
+    }
   }
-  const text = raw;
   if (text.trim() === "") return errorRes(400, "empty text");
   const record = await buildLatestRecord(text);
   await store(env, "setLatest", { record });
@@ -328,6 +345,18 @@ export default {
       if (path === "/pair") return html(PAIR_HTML);
       if (path === "/vault-view") return html(VAULT_HTML);
       if (path === "/nav-benchmark") return html(NAV_BENCHMARK_HTML);
+      // Installable iOS Shortcut, with this Worker's own URL baked in. Holds
+      // no secret — the TOKEN is an import question answered on the device.
+      if (path === "/shortcut") {
+        return new Response(buildShortcutPlist(url.origin), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/x-shortcut",
+            "Content-Disposition": 'attachment; filename="Clip to Car.shortcut"',
+            ...NO_STORE,
+          },
+        });
+      }
       // Which build is live. Public: the repo is public and this is only a
       // commit id, but it settles "did my deploy land?" in one request.
       if (path === "/version") return json({ sha: BUILD_ID, builtAt: BUILT_AT });

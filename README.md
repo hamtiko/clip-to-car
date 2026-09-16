@@ -187,6 +187,27 @@ the car browser's data de-authorizes the car (you just re-pair).
 
 Addresses stay plaintext and use a Shortcut (fast, no page to open):
 
+### One-tap install
+
+Open this on the iPhone and Shortcuts will install it, asking only for your token:
+
+**`BASE/shortcut`**
+
+The Worker generates the shortcut with its own URL already baked in, so the
+`TOKEN` — filled in by an import question — is the only thing you type. The file
+contains no secret, so the link is safe to keep in this README.
+
+It installs as **To Car**: share text or a map link from any app, or run it from the
+Home Screen / Siri to send whatever is on the clipboard.
+
+> **If Shortcuts refuses to import it**, iOS is blocking unsigned shortcuts. Enable
+> **Settings → Shortcuts → Advanced → Allow Untrusted Shortcuts** (the toggle only
+> appears once you have run at least one shortcut), then open the link again. If it
+> still will not import, build it by hand from the steps below and tell me — the
+> generated file is the one piece of this I cannot test from here.
+
+### Building it by hand (fallback)
+
 Build it so it works **both** from the Share Sheet and from the clipboard:
 
 1. **Shortcuts → +**, then open the shortcut's **ⓘ Details**:
@@ -205,6 +226,8 @@ Build it so it works **both** from the Share Sheet and from the clipboard:
    - Method: **POST**
    - Headers: `Authorization` = `Bearer YOUR_TOKEN`, `Content-Type` = `application/json`
    - Request Body: **JSON** → key `text`, value = the **Text** variable from step 3.
+     (`/set` also accepts a raw `text/plain` body, which is what the generated
+     shortcut posts — simpler to configure than a nested JSON field.)
 5. (Optional) add **Show Result** to confirm `{"ok":true}`.
 6. Rename it (e.g. "To Car").
 
