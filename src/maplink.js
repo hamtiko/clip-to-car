@@ -139,53 +139,66 @@ function validPair(lat, lon) {
   return { lat, lon };
 }
 
+// Ordered extractors. ORDER IS THE WHOLE POINT: a map page carries many
+// coordinates — the viewport centre, the city, the district, neighbouring
+// places — so "first pair found in the document" is not the place, it is
+// whatever the markup happens to mention first. That shipped a bug where org
+// links resolved to the CITY CENTRE.
+//
+// So: entity-anchored sources first (a coordinate that is structurally part of
+// the place's own record), loose document-wide scans last and only as a
+// fallback. Each records the convention of its own source in `via`, so a wrong
+// pin names the extractor that produced it.
+const COORD_EXTRACTORS = [
+  // schema.org geo object — scoped to the entity, so it cannot be the city.
+  { via: "geo{} lat,lon", lat: 1, lon: 2,
+    re: /"geo"\s*:\s*\{[^{}]*?"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?[^{}]*?"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?/gi },
+  { via: "geo{} lon,lat", lat: 2, lon: 1,
+    re: /"geo"\s*:\s*\{[^{}]*?"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?[^{}]*?"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?/gi },
+
+  // The org card's own attribute. Confirmed on a live /maps/org/ page; Yandex
+  // writes it lon,lat.
+  { via: "data-coordinates", lat: 2, lon: 1,
+    re: /data-coordinates\s*=\s*["'](-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)["']/gi },
+
+  // GeoJSON — lon,lat by spec.
+  { via: "coordinates[]", lat: 2, lon: 1,
+    re: /"coordinates"\s*:\s*\[\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)\s*\]/gi },
+
+  // Page-level metadata — lat;lon by spec.
+  { via: "geo.position", lat: 1, lon: 2,
+    re: /geo\.position["'\s][^>]*content=["'](-?\d{1,2}\.\d+)\s*;\s*(-?\d{1,3}\.\d+)/gi },
+
+  // --- LOOSE, unanchored. These are the ones that picked up a city centre. ---
+  { via: "latitude/longitude (loose)", lat: 1, lon: 2, loose: true,
+    re: /"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?[\s\S]{0,60}?"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?/gi },
+  { via: "longitude/latitude (loose)", lat: 2, lon: 1, loose: true,
+    re: /"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?[\s\S]{0,60}?"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?/gi },
+
+  // A map URL's ll= is the VIEWPORT CENTRE, not the place. Last resort only.
+  { via: "ll= (map centre, loose)", lat: 2, lon: 1, loose: true,
+    re: /[?&]ll=(-?\d{1,3}\.\d+)(?:,|%2C)(-?\d{1,2}\.\d+)/gi },
+];
+
+// Every candidate each extractor can find, for diagnosing a wrong pin against
+// a real page (surfaced by POST /resolve). Capped per extractor.
+export function parseCoordsAll(html, perExtractor = 3) {
+  if (typeof html !== "string" || !html) return [];
+  const out = [];
+  for (const ex of COORD_EXTRACTORS) {
+    const re = new RegExp(ex.re.source, ex.re.flags);
+    let m, n = 0;
+    while ((m = re.exec(html)) !== null && n < perExtractor) {
+      const p = validPair(Number(m[ex.lat]), Number(m[ex.lon]));
+      if (p) { out.push({ ...p, via: ex.via, loose: !!ex.loose }); n++; }
+    }
+  }
+  return out;
+}
+
 export function parseCoordsFromHtml(html) {
-  if (typeof html !== "string" || !html) return null;
-
-  // 1. Explicit, unambiguous keys — no convention to get wrong.
-  let m = html.match(/"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?[\s\S]{0,60}?"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?/);
-  if (m) {
-    const p = validPair(Number(m[1]), Number(m[2]));
-    if (p) return { ...p, via: "latitude/longitude" };
-  }
-  m = html.match(/"longitude"\s*:\s*"?(-?\d{1,3}\.\d+)"?[\s\S]{0,60}?"latitude"\s*:\s*"?(-?\d{1,2}\.\d+)"?/);
-  if (m) {
-    const p = validPair(Number(m[2]), Number(m[1]));
-    if (p) return { ...p, via: "longitude/latitude" };
-  }
-
-  // 2. Yandex org/place pages carry the point in a data-coordinates attribute,
-  //    in Yandex's usual lon,lat order. CONFIRMED against a live org page:
-  //    data-coordinates="44.498490,40.200207" is lon=44.49, lat=40.20 (Yerevan).
-  m = html.match(/data-coordinates\s*=\s*["'](-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)["']/);
-  if (m) {
-    const p = validPair(Number(m[2]), Number(m[1]));
-    if (p) return { ...p, via: "data-coordinates" };
-  }
-
-  // 3. A Yandex ll= anywhere in the markup (e.g. a static-map image URL).
-  //    Yandex ll is lon,lat.
-  m = html.match(/[?&]ll=(-?\d{1,3}\.\d+)(?:,|%2C)(-?\d{1,2}\.\d+)/i);
-  if (m) {
-    const p = validPair(Number(m[2]), Number(m[1]));
-    if (p) return { ...p, via: "ll=" };
-  }
-
-  // 4. GeoJSON-style "coordinates":[lon,lat] — GeoJSON is lon,lat.
-  m = html.match(/"coordinates"\s*:\s*\[\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,2}\.\d+)\s*\]/);
-  if (m) {
-    const p = validPair(Number(m[2]), Number(m[1]));
-    if (p) return { ...p, via: "coordinates[]" };
-  }
-
-  // 5. <meta name="geo.position" content="lat;lon"> — lat first by spec.
-  m = html.match(/geo\.position["'\s][^>]*content=["'](-?\d{1,2}\.\d+)\s*;\s*(-?\d{1,3}\.\d+)/i);
-  if (m) {
-    const p = validPair(Number(m[1]), Number(m[2]));
-    if (p) return { ...p, via: "geo.position" };
-  }
-
-  return null;
+  const all = parseCoordsAll(html, 1);
+  return all.length ? all[0] : null;
 }
 
 // Coordinate-ish snippets, for eyeballing a page none of the strategies match.

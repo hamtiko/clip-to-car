@@ -25,6 +25,7 @@ import {
   parseBareCoords,
   labelFromText,
   parseCoordsFromHtml,
+  parseCoordsAll,
   coordHints,
 } from "./maplink.js";
 import { ClipStore } from "./store.js";
@@ -271,6 +272,10 @@ async function handleResolve(request) {
     htmlBytes: html ? html.length : 0,
     fromUrl: finalUrl ? parseMapLink(finalUrl) : null,
     fromHtml: html ? parseCoordsFromHtml(html) : null,
+    // Every candidate, in priority order — a map page carries the place, the
+    // city and the viewport centre, so seeing them side by side is what tells
+    // us whether the winner is the right one.
+    candidates: html ? parseCoordsAll(html) : [],
     hints: html ? coordHints(html) : [],
   });
 }

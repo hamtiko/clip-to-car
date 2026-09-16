@@ -7,6 +7,7 @@ import {
   parseBareCoords,
   labelFromText,
   parseCoordsFromHtml,
+  parseCoordsAll,
   coordHints,
 } from "../src/maplink.js";
 
@@ -101,9 +102,14 @@ describe("coordinates from a fetched map page", () => {
 
   it("reads explicit latitude/longitude keys in either order", () => {
     expect(parseCoordsFromHtml('{"latitude":40.1914,"longitude":44.5152}'))
-      .toMatchObject({ lat: LAT, lon: LON, via: "latitude/longitude" });
+      .toMatchObject({ lat: LAT, lon: LON, via: "latitude/longitude (loose)" });
     expect(parseCoordsFromHtml('{"longitude":44.5152,"latitude":40.1914}'))
-      .toMatchObject({ lat: LAT, lon: LON, via: "longitude/latitude" });
+      .toMatchObject({ lat: LAT, lon: LON, via: "longitude/latitude (loose)" });
+  });
+
+  it("reads a schema.org geo object, which is scoped to the entity", () => {
+    expect(parseCoordsFromHtml('{"@type":"Place","geo":{"latitude":40.1914,"longitude":44.5152}}'))
+      .toMatchObject({ lat: LAT, lon: LON, via: "geo{} lat,lon" });
   });
 
   it("reads data-coordinates as lon,lat (real Yandex org page)", () => {
@@ -115,9 +121,11 @@ describe("coordinates from a fetched map page", () => {
     });
   });
 
-  it("reads a Yandex ll= as lon,lat", () => {
+  it("reads a Yandex ll= as lon,lat, but only as a last resort", () => {
+    // ll= is the map VIEWPORT CENTRE, not the place — usable when nothing
+    // better exists, which is why it sorts last and is flagged loose.
     expect(parseCoordsFromHtml('<img src="https://s/?ll=44.5152,40.1914&z=17">'))
-      .toMatchObject({ lat: LAT, lon: LON, via: "ll=" });
+      .toMatchObject({ lat: LAT, lon: LON, via: "ll= (map centre, loose)", loose: true });
   });
 
   it("reads GeoJSON coordinates[] as lon,lat", () => {
@@ -130,9 +138,38 @@ describe("coordinates from a fetched map page", () => {
       .toMatchObject({ lat: LAT, lon: LON, via: "geo.position" });
   });
 
-  it("prefers explicit keys over looser matches", () => {
-    const html = '{"coordinates":[1.1111,2.2222]} {"latitude":40.1914,"longitude":44.5152}';
-    expect(parseCoordsFromHtml(html).via).toBe("latitude/longitude");
+  // REGRESSION. Org links were resolving to the CITY CENTRE: every extractor
+  // took the first pair anywhere in the document, and a map page mentions the
+  // city and the viewport centre before the place's own record. The fix is
+  // ordering by how tightly a source is bound to the entity, not by how
+  // explicit its key names look.
+  it("picks the place, not the city centre, when a page mentions both", () => {
+    const page =
+      '{"city":{"latitude":40.1792,"longitude":44.4991}}' +      // city first...
+      '<img src="/s?ll=44.4991,40.1792&z=12">' +                  // ...and the viewport
+      '<div data-coordinates="44.498490,40.200207">';             // the actual place
+    const got = parseCoordsFromHtml(page);
+    expect(got.via).toBe("data-coordinates");
+    expect(got.lat).toBeCloseTo(40.200207, 6);
+    expect(got.lon).toBeCloseTo(44.498490, 6);
+  });
+
+  it("an entity-anchored geo{} beats a loose pair earlier in the page", () => {
+    const page =
+      '{"region":{"latitude":40.0000,"longitude":44.0000}}' +
+      '{"@type":"Place","geo":{"latitude":40.1914,"longitude":44.5152}}';
+    expect(parseCoordsFromHtml(page)).toMatchObject({ lat: LAT, lon: LON });
+  });
+
+  it("parseCoordsAll surfaces every candidate, flagging the loose ones", () => {
+    const page =
+      '{"city":{"latitude":40.1792,"longitude":44.4991}}' +
+      '<div data-coordinates="44.498490,40.200207">';
+    const all = parseCoordsAll(page);
+    expect(all.length).toBeGreaterThan(1);
+    expect(all[0].via).toBe("data-coordinates"); // priority order
+    expect(all[0].loose).toBe(false);
+    expect(all.some((c) => c.loose)).toBe(true);
   });
 
   it("returns null when there is nothing usable", () => {
