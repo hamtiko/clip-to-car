@@ -200,11 +200,18 @@ contains no secret, so the link is safe to keep in this README.
 It installs as **To Car**: share text or a map link from any app, or run it from the
 Home Screen / Siri to send whatever is on the clipboard.
 
-> **If Shortcuts refuses to import it**, iOS is blocking unsigned shortcuts. Enable
-> **Settings → Shortcuts → Advanced → Allow Untrusted Shortcuts** (the toggle only
-> appears once you have run at least one shortcut), then open the link again. If it
-> still will not import, build it by hand from the steps below and tell me — the
-> generated file is the one piece of this I cannot test from here.
+> **Current iOS will not import this directly.** Opening the link gives *"Importing
+> unsigned shortcut files is not supported"*, and the old **Allow Untrusted Shortcuts**
+> escape hatch has been removed from Settings → Shortcuts → Advanced. The file must be
+> **signed** first, which only macOS can do:
+>
+> ```bash
+> curl -sS BASE/shortcut -o ToCar.shortcut
+> shortcuts sign --mode anyone --input ToCar.shortcut --output ToCar-signed.shortcut
+> ```
+>
+> Then AirDrop `ToCar-signed.shortcut` to the phone and open it. If signing rejects the
+> file, use the manual steps below — they are known to work, and the result is identical.
 
 ### Building it by hand (fallback)
 
