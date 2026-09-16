@@ -3,7 +3,13 @@
 // SINGLE SOURCE: build.mjs inlines this into both the car page and
 // /nav-benchmark, so the buttons you test are literally the ones that ship.
 //
-// ON-CAR FINDINGS (XPeng P7+, Xmart OS) — `status` records what the car did:
+// ON-CAR FINDINGS (XPeng P7+, Xmart OS).
+//
+// `status` records what the car DID; `ship` records what we CHOOSE to show as a
+// button. They differ on purpose: several schemes work but are equivalent, and
+// the car screen should carry one obvious action, not four.
+//
+// `status` values:
 //   works   — opened and did the useful thing
 //   partial — opened an app but did not start navigation
 //   fails   — nothing happened
@@ -37,10 +43,12 @@
 //     Yandex. The signature could then be computed IN THE WORKER, so the key
 //     never reaches the car — see the README.
 //
-//     CAVEAT ON THE EVIDENCE: the unsigned quota is per device per day, and a
-//     benchmarking session taps many Navigator links in a row. Some of those
-//     failures may be a spent quota rather than a rejected command. Worth one
-//     retest on a fresh day, tapping ① FIRST and nothing else.
+//     DECISION — CLOSED, NOT PURSUED. Yandex only issues an access key to an
+//     app published on the Play Store, which is absurd overhead for a personal
+//     tool with a single user. One-tap navigation into Navigator is therefore
+//     off the table, and geo: is the answer: it opens the point in a map and
+//     the driver taps "Get directions" once. Spike 3 is settled — do not
+//     reopen without a new reason.
 //
 //  4. AMap did nothing under either package name — this car does not run it.
 //  5. google.navigation: did nothing, so nothing here registers for it.
@@ -61,8 +69,9 @@ export const NAV_SCHEMES = [
   // --- confirmed working on the car ----------------------------------------
   {
     id: "intentGeo",
-    label: "Open in maps (geo intent)",
+    label: "Open in maps",
     status: "works",
+    ship: true,
     note: "CONFIRMED on the car. Generic geo intent, no package — whatever " +
       "handles maps answers. Shows the point; may not start turn-by-turn.",
     build: function (lat, lon, name) {
@@ -83,6 +92,7 @@ export const NAV_SCHEMES = [
     id: "yandexWeb",
     label: "Route in browser (Yandex web)",
     status: "works",
+    ship: true,
     note: "Opens a route in this browser. No app needed — the safety net.",
     build: function (lat, lon) { return yandexWebRoute(lat, lon); },
   },

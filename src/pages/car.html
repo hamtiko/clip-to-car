@@ -34,17 +34,6 @@
             border-radius:14px; border:1px solid var(--edge); background:#0f1720; color:var(--fg); text-decoration:none; }
   a.btn { text-decoration:none; }
   .inlink { color:var(--accent); word-break:break-all; }
-  .tester { margin-top:8px; border:1px solid var(--edge); border-radius:14px; padding:12px 14px; background:#0d141c; }
-  .tester summary { font-size:17px; font-weight:700; cursor:pointer; padding:6px 0; }
-  .trow { border-top:1px solid var(--edge); padding:14px 0 4px; }
-  .tnote { font-size:13px; color:var(--muted); margin:8px 0 0; }
-  .turl { font-size:12px; color:var(--muted); word-break:break-all; margin:6px 0 8px; user-select:text; }
-  .btn.small { min-height:44px; font-size:15px; }
-  .badge { display:inline-block; margin-top:8px; font-size:12px; font-weight:700; letter-spacing:.06em;
-           text-transform:uppercase; padding:3px 8px; border-radius:999px; }
-  .badge-works { background:rgba(46,204,113,.18); color:var(--ok); }
-  .badge-partial { background:rgba(255,204,77,.18); color:var(--warn); }
-  .badge-fails { background:rgba(255,107,107,.15); color:var(--err); }
   .muted { color:var(--muted); } .hint { font-size:14px; color:var(--muted); margin-top:14px; text-align:center; }
   .qrwrap { display:flex; flex-direction:column; align-items:center; gap:16px; }
   .qr { width:min(60vw,320px); background:#fff; padding:14px; border-radius:16px; }
@@ -114,13 +103,12 @@
   var PAIR_POLL_MS = 2000;    // /pair/claim poll interval (§5.1)
   var PAIR_MAX_FAILS = 3;     // regenerate QR after this many decrypt failures
 
-  // Real buttons are exactly the schemes confirmed on this car (status:"works"
-  // in src/navschemes.js). Marking one as working there promotes it here — no
-  // second list to keep in sync. A button that does nothing is worse than no
-  // button, so nothing unconfirmed is shown by default; the rest stay under
-  // "Try all nav schemes" below, which is how a scheme earns "works".
-  function enabledSchemes() {
-    return NAV_SCHEMES.filter(function (s) { return s.status === "works"; });
+  // Buttons are the schemes flagged `ship` in src/navschemes.js. Several
+  // schemes work but are equivalent; the car screen gets one obvious action,
+  // not four. Every measured result still lives in that file, and the full
+  // candidate list stays testable at /nav-benchmark.
+  function shippedSchemes() {
+    return NAV_SCHEMES.filter(function (s) { return s.ship; });
   }
 
   var $ = function (id) { return document.getElementById(id); };
@@ -223,8 +211,21 @@
     html += '<div class="coords">' + coordStr + "</div>";
     valueWrap.innerHTML = html;
 
-    // Copy coordinates is the always-works path into the built-in nav search.
-    var copyCoords = mkBtn("Copy coordinates", "btn");
+    // Getting there is the point, so the map hand-off is the primary action.
+    // geo: only asks to DISPLAY the point, so the driver still taps "Get
+    // directions": Navigator's routing deep link is gated behind an access key
+    // Yandex grants only to Play Store apps (see src/navschemes.js).
+    shippedSchemes().forEach(function (scheme, i) {
+      actions.appendChild(mkLinkBtn(
+        scheme.label,
+        scheme.build(data.lat, data.lon, data.name || ""),
+        i === 0 ? "btn" : "navbtn"
+      ));
+    });
+
+    // Pasting coordinates into the built-in nav search is the fallback that
+    // cannot break, whatever the car does with schemes.
+    var copyCoords = mkBtn("Copy coordinates", "btn secondary");
     copyCoords.onclick = function () { copyText(coordStr, copyCoords); };
     actions.appendChild(copyCoords);
 
@@ -236,69 +237,6 @@
 
     var original = firstUrl(data.text);
     if (original) actions.appendChild(mkLinkBtn("Open original link", original, "navbtn"));
-
-    enabledSchemes().forEach(function (scheme) {
-      actions.appendChild(mkLinkBtn(scheme.label, scheme.build(data.lat, data.lon, data.name || ""), "navbtn"));
-    });
-
-    actions.appendChild(buildSchemeTester(data));
-  }
-
-  // Collapsible panel listing EVERY candidate scheme, built from the place
-  // currently on screen. Tap each on the car and note which opens the native
-  // nav and whether the pin is right; the winners go into ENABLED_NAV_IDS.
-  function buildSchemeTester(data) {
-    var box = document.createElement("details");
-    box.className = "tester";
-    var sum = document.createElement("summary");
-    sum.textContent = "Try all nav schemes (" + NAV_SCHEMES.length + ")";
-    box.appendChild(sum);
-
-    if (data.source) {
-      var src = document.createElement("p");
-      src.className = "tnote";
-      src.textContent = "Coordinates from: " + data.source;
-      box.appendChild(src);
-    }
-
-    var hint = document.createElement("p");
-    hint.className = "tnote";
-    hint.textContent = "Tap each one and note what happens. An https link always opens the " +
-      "browser — only a scheme or intent:// can hand off to a native app. " +
-      "Numbered entries are this round's candidates; try those first.";
-    box.appendChild(hint);
-
-    NAV_SCHEMES.forEach(function (scheme) {
-      var url = scheme.build(data.lat, data.lon, data.name || "");
-      var row = document.createElement("div");
-      row.className = "trow";
-
-      var a = document.createElement("a");
-      a.className = "navbtn"; a.textContent = scheme.label; a.href = url; a.rel = "noopener";
-      row.appendChild(a);
-
-      if (scheme.status && scheme.status !== "untested") {
-        var badge = document.createElement("span");
-        badge.className = "badge badge-" + scheme.status;
-        badge.textContent = scheme.status;
-        row.appendChild(badge);
-      }
-
-      var note = document.createElement("p");
-      note.className = "tnote"; note.textContent = scheme.note;
-      row.appendChild(note);
-
-      var raw = document.createElement("p");
-      raw.className = "turl"; raw.textContent = url;
-      row.appendChild(raw);
-
-      var copy = mkBtn("Copy this URL", "btn secondary small");
-      copy.onclick = function () { copyText(url, copy); };
-      row.appendChild(copy);
-
-      box.appendChild(row);
-    });
-    return box;
   }
 
   function mkBtn(label, cls) { var b = document.createElement("button"); b.className = cls; b.type = "button"; b.textContent = label; return b; }

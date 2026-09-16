@@ -21,7 +21,7 @@ a single deploy, one origin (no CORS), and a generous free tier. Storage is a si
 |------|------|--------|
 | 1 | **Address hand-off** — phone → car, plaintext, persists | ✅ **live on the car** |
 | 1.5 | **QR pairing** — provision the car without typing secrets | ✅ **live on the car** |
-| 2 | **Map link → place** — resolve a Yandex share to name + coords, offer nav | ✅ **live on the car**; one-tap navigation still open (below) |
+| 2 | **Map link → place** — resolve a Yandex share to name + coords, open in maps | ✅ **live on the car** (one-tap nav ruled out — [why](#why-one-tap-navigation-doesnt-work-and-what-would-fix-it)) |
 | 3 | **Encrypted credentials** — E2E-encrypted, single-use, TTL, auto-clear | ✅ built & tested, **not yet exercised live** |
 
 The server never sees credential plaintext, the encryption `KEY`, or the pairing key `W` — it
@@ -373,7 +373,7 @@ than in memory. Schemes marked `works` are promoted to real buttons automaticall
 **Yandex Navigator IS installed** — the plan assumed no Yandex app could be present on a
 China-spec car. Note Navigator and Yandex Maps are *different apps*; only Navigator is here.
 
-### Why one-tap navigation doesn't work (and what would fix it)
+### Why one-tap navigation doesn't work
 
 Every Navigator command failed — bare and `intent://`-wrapped, route and show-point. The
 syntax is not the problem; it matches Yandex's published scheme exactly.
@@ -389,15 +389,15 @@ day), which is precisely the observed behaviour: the app opens and the command i
 See Yandex's [commercial-use terms](https://yandex.ru/dev/navigator/doc/ru/concepts/navigator-commercial-use)
 and [access-key signing](https://yandex.ru/dev/navigator/doc/ru/concepts/navigator-commercial-use-signature).
 
-**If you obtain an access key**, the signature can be computed **in the Worker** — the key
-would live as a Worker secret alongside `TOKEN` and never reach the car, which already fits
-the architecture. That is the only route to true one-tap navigation into Navigator.
+**Decision: closed, not pursued.** Yandex only issues an access key to an app published on
+the Play Store — absurd overhead for a personal tool with one user. One-tap navigation into
+Navigator is off the table.
 
-**One caveat on the evidence:** the unsigned quota is per device per day, and a benchmarking
-session taps many Navigator links in a row. Some of those failures may be a spent quota rather
-than a rejected command. Worth one retest on a fresh day, tapping the Navigator route entry
-**first and nothing else** — if it works, ~5 navigations/day may be enough for personal use.
+**What ships:** `geo:` as the primary **Open in maps** button. It opens the point in a map and
+the driver taps **Get directions** once. Tapping twice is a fine price for not shipping an app
+to a store.
 
-**What ships today:** `geo:`, which opens the point in a map; starting the drive is one more
-tap on **Get directions**.
+Every candidate remains recorded in `src/navschemes.js` with what the car actually did, and
+`/nav-benchmark` still renders the full list — so if the situation ever changes, the evidence
+is there rather than needing to be rediscovered. The car page itself shows only what works.
 ```
