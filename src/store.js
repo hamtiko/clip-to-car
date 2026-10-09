@@ -41,7 +41,54 @@ export class ClipStore {
     if (stale.length) await this.state.storage.delete(stale);
   }
 
+  // Every stored value stays well below the DO's 128 KiB per-value limit.
+  // Serialize the entire report operation so peeks/reads/deletes cannot observe
+  // half a report, and simultaneous sends cannot overwrite each other.
+  async outbox(op, args) {
+    return this.state.storage.transaction(async (txn) => {
+      let meta = await txn.get("outbox");
+      const remove = async () => {
+        await txn.delete(["outbox", ...Array.from({ length: meta.chunks }, (_, i) => "outbox:" + i)]);
+        await txn.deleteAlarm();
+      };
+      if (meta && Date.now() >= meta.expiresAt) { await remove(); meta = null; }
+      if (op === "putOutbox") {
+        if (meta) {
+          // An upload retry after a lost response is safe only for the same
+          // transfer, including ciphertext. A new report never overwrites it.
+          if (meta.id !== args.record.id || meta.iv !== args.record.iv) return { conflict: true };
+          let ct = "";
+          for (let i = 0; i < meta.chunks; i++) ct += await txn.get("outbox:" + i);
+          return ct === args.record.ct ? { expiresAt: meta.expiresAt } : { conflict: true };
+        }
+        const { ct, ...record } = args.record;
+        const values = {};
+        const chunkSize = 60 * 1024;
+        const chunks = Math.ceil(ct.length / chunkSize);
+        for (let i = 0; i < chunks; i++) values["outbox:" + i] = ct.slice(i * chunkSize, (i + 1) * chunkSize);
+        const expiresAt = Date.now() + args.ttl * 1000;
+        values.outbox = { ...record, chunks, expiresAt };
+        await txn.put(values);
+        await txn.setAlarm(expiresAt);
+        return { expiresAt };
+      }
+      if (!meta || args.id && args.id !== meta.id) return { record: null };
+      const { chunks, ...record } = meta;
+      if (op === "peekOutbox") return { record: { id: record.id, ts: record.ts, expiresAt: record.expiresAt } };
+      if (op === "deleteOutbox") { await remove(); return { deleted: true }; }
+      let ct = "";
+      for (let i = 0; i < chunks; i++) ct += await txn.get("outbox:" + i);
+      return { record: { ...record, ct } };
+    });
+  }
+
+  async alarm() {
+    // Unlike lazy expiry alone, this also removes unattended report chunks.
+    await this.outbox("peekOutbox", {});
+  }
+
   async handle(op, args) {
+    if (["putOutbox", "peekOutbox", "readOutbox", "deleteOutbox"].includes(op)) return this.outbox(op, args);
     switch (op) {
       case "setLatest":
         await this.state.storage.put("latest", args.record);

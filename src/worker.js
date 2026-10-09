@@ -14,6 +14,7 @@ import {
   PAIR_HTML,
   VAULT_HTML,
   NAV_BENCHMARK_HTML,
+  TRANSFER_HTML,
   BUILD_ID,
   BUILT_AT,
 } from "./generated/pages.js";
@@ -41,6 +42,8 @@ export { ClipStore };
 const DEFAULT_VAULT_TTL_SECONDS = 120; // credential lifetime
 const DEFAULT_PAIR_TTL_SECONDS = 120; // pairing-slot lifetime
 const MAX_BODY_BYTES = 8192; // reject oversized POST bodies (§6 validation)
+const MAX_TRANSFER_BODY_BYTES = 2 * 1024 * 1024;
+const TRANSFER_TTL_SECONDS = 3600;
 const SHORT_LINK_TIMEOUT_MS = 6000; // cap on the map short-link redirect fetch
 // How much of a fetched map page to scan. A real Yandex org page hit a 400k
 // cap exactly, so this is well above it — the body is already fully read, so a
@@ -333,6 +336,56 @@ async function handlePairClaim(request, env) {
   return json({ present: true, iv: record.iv, ct: record.ct });
 }
 
+// Reports use a separate, byte-bounded reader; leave the small address and
+// credential limits intact. Stop reading as soon as the limit is exceeded.
+async function readTransfer(request) {
+  if (!request.body) return { ok: false, reason: "empty body" };
+  const reader = request.body.getReader();
+  const chunks = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > MAX_TRANSFER_BODY_BYTES) {
+      await reader.cancel();
+      return { ok: false, reason: "report too large", status: 413 };
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  try { return { ok: true, data: JSON.parse(new TextDecoder().decode(bytes)) }; }
+  catch { return { ok: false, reason: "body is not valid JSON" }; }
+}
+
+async function handleOutbox(request, env, path) {
+  if (path === "/outbox/peek") {
+    const { record } = await store(env, "peekOutbox");
+    return json(record ? { present: true, ...record } : { present: false });
+  }
+  const body = path === "/outbox" ? await readTransfer(request) : await readJson(request);
+  if (!body.ok) return errorRes(body.status || 400, body.reason);
+  const d = body.data || {};
+  if (typeof d.id !== "string" || !PAIR_ID_RE.test(d.id)) return errorRes(400, "bad id");
+  if (path === "/outbox") {
+    if (d.v !== 1 || typeof d.iv !== "string" || !/^[A-Za-z0-9_-]{16}$/.test(d.iv) ||
+        !isNonEmptyB64u(d.ct) || d.ct.length < 24 || d.ct.length % 4 === 1) {
+      return errorRes(400, "bad ciphertext");
+    }
+    const result = await store(env, "putOutbox", {
+      record: { id: d.id, v: 1, iv: d.iv, ct: d.ct, ts: Date.now() },
+      ttl: TRANSFER_TTL_SECONDS,
+    });
+    if (result.conflict) return errorRes(409, "A report is waiting. Receive or delete it before sending another.");
+    return json({ ok: true, id: d.id, expiresAt: result.expiresAt });
+  }
+  const result = await store(env, path === "/outbox/read" ? "readOutbox" : "deleteOutbox", { id: d.id });
+  if (!result.record && !result.deleted) return errorRes(404, "report expired, deleted, or replaced");
+  return json(result.record ? { present: true, ...result.record } : { ok: true });
+}
+
 // --- Router -----------------------------------------------------------------
 
 export default {
@@ -349,6 +402,7 @@ export default {
       if (path === "/pair") return html(PAIR_HTML);
       if (path === "/vault-view") return html(VAULT_HTML);
       if (path === "/nav-benchmark") return html(NAV_BENCHMARK_HTML);
+      if (path === "/from-car" || path === "/receive") return html(TRANSFER_HTML);
       // Installable iOS Shortcut, with this Worker's own URL baked in. Holds
       // no secret — the TOKEN is an import question answered on the device.
       if (path === "/shortcut") {
@@ -379,8 +433,12 @@ export default {
       (method === "GET" && path === "/vault/peek") ||
       (method === "GET" && path === "/vault/claim");
 
-    if (authedRoutes) {
+    const outboxRoute = (method === "GET" && path === "/outbox/peek") ||
+      (method === "POST" && ["/outbox", "/outbox/read", "/outbox/delete"].includes(path));
+
+    if (authedRoutes || outboxRoute) {
       if (!isAuthed(request, env)) return unauthorized();
+      if (outboxRoute) return handleOutbox(request, env, path);
       if (path === "/set") return handleSet(request, env);
       if (path === "/resolve") return handleResolve(request);
       if (path === "/latest") return handleLatest(env);

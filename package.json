@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node build.mjs",
     "pretest": "node build.mjs",
-    "test": "vitest run",
+    "test": "vitest run && node test/transfer-ui.cjs",
     "test:watch": "vitest",
     "predeploy": "node build.mjs",
     "deploy": "wrangler deploy",

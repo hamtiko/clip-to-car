@@ -37,6 +37,7 @@ const PAGE_EXPORTS = {
   "pair.html": "PAIR_HTML",
   "vault.html": "VAULT_HTML",
   "nav-benchmark.html": "NAV_BENCHMARK_HTML",
+  "transfer.html": "TRANSFER_HTML",
 };
 
 function inlineHelpers(html, name) {

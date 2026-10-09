@@ -23,6 +23,7 @@ a single deploy, one origin (no CORS), and a generous free tier. Storage is a si
 | 1.5 | **QR pairing** — provision the car without typing secrets | ✅ **live on the car** |
 | 2 | **Map link → place** — resolve a Yandex share to name + coords, open in maps | ✅ **live on the car** (one-tap nav ruled out — [why](#why-one-tap-navigation-doesnt-work)) |
 | 3 | **Encrypted credentials** — E2E-encrypted, single-use, TTL, auto-clear | ✅ built & tested, **not yet exercised live** |
+| 4 | **From car** — encrypted text / large JSON reports → PC or phone, Copy + Download | Built; **not yet exercised live** |
 
 The server never sees credential plaintext, the encryption `KEY`, or the pairing key `W` — it
 only stores and returns ciphertext.
@@ -73,6 +74,7 @@ clip-to-car/
       send.html          # phone credential sender (/send)
       pair.html          # phone pairing page (/pair)
       nav-benchmark.html # Spike 3 tool (/nav-benchmark)
+      transfer.html      # car sender (/from-car) + PC/phone receiver (/receive)
   test/                  # vitest (Workers pool): api, crypto, maplink
 ```
 
@@ -158,6 +160,8 @@ Let `BASE = https://clip-to-car.<your-subdomain>.workers.dev`.
 | **Car — credentials** | `BASE/vault-view` | Reuses the paired secrets from the car's `localStorage`. |
 | **Phone — sender** | `BASE/send#t=TOKEN&k=KEY` | First open remembers the secrets on the phone (so `/pair` can reuse them). |
 | **Phone — pairing** | opened from the QR, not bookmarked | The QR encodes `BASE/pair#id=…&w=…`. |
+| **Car — send text** | `BASE/from-car` | Reuses the paired token and encryption key. Also linked from the main car page. |
+| **PC / phone — receiver** | `BASE/receive` | Reuses stored secrets, or accepts them in Device setup on first use. |
 
 **Fallback (no pairing):** if pairing isn't usable on the car, bookmark
 `BASE/#t=TOKEN&k=KEY` (address view) and `BASE/vault-view#t=TOKEN&k=KEY` directly. The page
@@ -246,6 +250,68 @@ car shows the place name + coordinates instead of a raw URL.
 
 > Credentials do **not** go through this Shortcut — iOS Shortcuts can't do AES-GCM. Use the
 > `/send` page, which encrypts in Safari's `crypto.subtle`.
+
+---
+
+## Send text / JSON from car to PC or phone
+
+The reverse transfer uses the same Worker and existing `TOKEN` + `KEY`; both devices
+only need Internet access, not the same Wi-Fi network. Text is encrypted in the car
+browser with AES-256-GCM and decrypted in the receiving browser. It is preserved
+exactly, including whitespace, Unicode, and JSON formatting.
+
+1. On the car, copy the text you want to transfer. For the
+   [XPeng tester](https://hamtiko.github.io/xpeng-browser-capability-tester/), run discovery
+   and tap **Copy Full Report**.
+2. Open **Send text to PC / phone** on the car's main clipboard page (or bookmark
+   `BASE/from-car`). Tap **Paste** and **Send to PC / phone**. If clipboard reading is
+   blocked, long-press the text field and paste manually.
+3. On the PC, open `BASE/receive`. On the phone, scan the sender's QR code to open it.
+   A phone previously provisioned using `/send` reuses its saved secrets. On a new
+   browser, expand **Device setup** and enter the car's token and encryption key once.
+   The QR contains just the receiver URL; it does not provision a new device.
+4. The receiver checks for a report every three seconds while visible. Tap **Copy text**
+   or **Download file**. Valid JSON downloads as `car-report.json`, other text as
+   `car-report.txt`. Downloading never reformats the contents. Clipboard copying has a
+   selectable-text fallback.
+5. Tap **Delete report** when finished. One report can wait at a time; another send is
+   refused until it is deleted or expires. Reload the car sender if another device
+   deleted a report and you want to refresh its displayed status.
+
+Reports have a **one-hour** lifetime. Reads do not consume them, so a failed download,
+reload, or a second receiving device can retry. A Durable Object alarm removes expired
+metadata and ciphertext chunks even if nobody opens the receiver. Already displayed
+text remains in the receiving page until deleted there or the page is closed/reloaded.
+
+The sender accepts up to **1 MiB of encoded plaintext** (`JSON.stringify({text})` in
+UTF-8), which includes JSON escaping/envelope overhead. The dedicated upload route has
+a 2 MiB byte limit for the encrypted wire format. Ciphertext is split into 60 KiB values
+to stay below the Durable Object per-value limit. The existing small request limits for
+addresses, credentials, and pairing are unchanged.
+
+The authenticated API is `POST /outbox` (encrypted upload), `GET /outbox/peek` (metadata
+only), `POST /outbox/read` with `{id}` (retryable read), and `POST /outbox/delete` with
+`{id}`. Uploads have `{id,v:1,iv,ct}`, using a fresh 16-byte base64url ID and the existing
+crypto wire format. Identical upload retries retain the original expiry. Versioned
+reads/deletes cannot act on a newer report. The address and credential slots remain
+independent.
+
+This flow has not yet been tested on the actual car. In particular, clipboard **reading**
+can have different permissions from the clipboard writing already verified there.
+
+### Possible follow-ups
+
+- **Direct tester export:** add a **Send report to PC / phone** button to the tester.
+  The tester runs on GitHub Pages, which cannot access the Worker's stored device
+  secrets. A receiver page on the Worker could accept the report through `postMessage`
+  from a strictly checked tester origin/window, then show a review-and-send step.
+  This avoids a large payload in a URL and avoids provisioning the tester with secrets.
+  It needs an on-car check that the browser supports the necessary windows.
+- **Larger files:** use R2 for encrypted report blobs if the 1 MiB message limit becomes
+  restrictive, while keeping metadata and expiry coordination in the Durable Object.
+- **Offline export:** split compressed data across animated QR codes. A single QR fits
+  only a few kilobytes, and reconstructing many frames requires a dedicated scanner;
+  it is less convenient for these large reports than the Internet-based transfer.
 
 ---
 
@@ -360,12 +426,19 @@ wouldn't want a passenger to glimpse. Addresses are plaintext (low sensitivity).
 ## Tests
 
 ```bash
-npm test        # builds, then runs vitest in the Cloudflare Workers pool
+npm test        # builds, then runs Workers tests and page-script interaction tests
 ```
 
 Covers: auth on/off, `/set` validation + map-link enrichment, `/latest` shape, vault
 post/peek/claim single-use, pairing put/claim single-use, and the crypto wire format
 (round-trip, wrong-key failure, tamper detection, fresh IV, phone↔car interop).
+Reverse-transfer tests cover large Unicode reports across storage chunks, repeated
+reads, upload retries, concurrent-send conflicts, stale IDs, expiry/alarm cleanup,
+authentication, and oversized/malformed uploads.
+The dependency-free Node interaction checks execute the built page scripts with
+WebCrypto and a minimal DOM/API harness. They verify exact-text downloads, initial
+PC setup, clipboard fallbacks, lost-response retries, size validation, and wrong-key
+errors; they do not replace testing the rendered page in the car browser.
 
 ---
 

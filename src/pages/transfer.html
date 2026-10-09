@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>From Car · Clip to Car</title>
+<style>
+  :root { --bg:#0b0f14; --card:#141b23; --edge:#243040; --fg:#f4f7fb; --muted:#9fb0c3; --accent:#37c8ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; padding:20px; }
+  main { max-width:760px; margin:auto; }
+  h1 { font-size:26px; } p { line-height:1.5; } a { color:var(--accent); overflow-wrap:anywhere; }
+  .card { background:var(--card); border:1px solid var(--edge); border-radius:16px; padding:20px; margin:18px 0; }
+  .muted, label { color:var(--muted); } label { display:block; margin:12px 0 6px; }
+  input, textarea { width:100%; background:#0f1720; color:var(--fg); border:1px solid var(--edge); border-radius:10px; padding:12px; font-size:16px; }
+  textarea { min-height:280px; font:14px/1.5 monospace; resize:vertical; }
+  button { min-height:56px; padding:12px 20px; margin:8px 8px 0 0; font:600 18px system-ui; background:var(--accent); color:#04121a; border:0; border-radius:12px; cursor:pointer; }
+  button.secondary { background:#243040; color:var(--fg); } button[disabled] { opacity:.5; cursor:default; }
+  summary { min-height:44px; cursor:pointer; } #status { min-height:24px; overflow-wrap:anywhere; }
+  .qr { background:white; padding:12px; max-width:280px; border-radius:12px; } .qr svg { width:100%; height:auto; display:block; }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; } [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <a href="/">← Car clipboard</a>
+  <h1 id="title">Send text from car</h1>
+  <p id="intro" class="muted">Paste text or a JSON report, then send it to your PC or phone. Encrypted before it leaves the car.</p>
+  <details id="settings" class="card">
+    <summary>Device setup</summary>
+    <p class="muted">Paired devices are ready automatically. On a new PC or phone, enter the same token and encryption key used by your car. These are remembered in this browser.</p>
+    <form id="setup">
+      <label for="token">Access token</label><input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required />
+      <label for="key">Encryption key</label><input id="key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required />
+      <button type="submit">Save setup</button>
+    </form>
+  </details>
+  <section class="card">
+    <label for="text" id="textLabel">Text / JSON report</label>
+    <textarea id="text" spellcheck="false" autocapitalize="off" autocorrect="off" aria-describedby="size"></textarea>
+    <p id="size" class="muted">Up to 1 MiB, including the encrypted message’s text encoding.</p>
+    <div id="sender">
+      <button id="paste" type="button" class="secondary">Paste</button>
+      <button id="send" type="button" disabled>Send to PC / phone</button>
+    </div>
+    <div id="receiver" hidden>
+      <button id="copy" type="button" disabled>Copy text</button>
+      <button id="download" type="button" disabled>Download file</button>
+    </div>
+    <button id="delete" type="button" class="secondary" hidden>Delete report</button>
+    <p id="status" role="status" aria-live="polite">Checking device setup…</p>
+    <p class="muted">One report at a time. Available for one hour or until deleted. Reading it leaves the server copy available for retries and other devices.</p>
+  </section>
+  <section id="receiveLink" class="card">
+    <p>On your PC, open <a id="link" href="/receive">the receiver page</a>. On your phone, scan this code.</p>
+    <div id="qr" class="qr" aria-label="Open the receiver on your phone"></div>
+    <p class="muted">The code opens the receiver. A new device still needs the setup above.</p>
+  </section>
+</main>
+<script>
+/*__INLINE_CRYPTO__*/
+/*__INLINE_QR__*/
+</script>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var receiving = location.pathname === "/receive";
+  var MAX_PAYLOAD_BYTES = 1024 * 1024;
+  var token, key, pendingId = null, loadedId = null, retry = null, generation = 0, timer;
+  var text = $("text");
+  function say(message) { $("status").textContent = message; }
+  function safeLS(fn) { try { return fn(); } catch (e) { return null; } }
+  var frag = new URLSearchParams(location.hash.slice(1));
+  token = frag.get("t") || safeLS(function () { return localStorage.getItem("ctc.token"); });
+  key = frag.get("k") || safeLS(function () { return localStorage.getItem("ctc.key"); });
+  if (frag.get("t")) safeLS(function () { localStorage.setItem("ctc.token", token); });
+  if (frag.get("k")) safeLS(function () { localStorage.setItem("ctc.key", key); });
+  if (location.hash) history.replaceState(null, "", location.pathname);
+  $("token").value = token || ""; $("key").value = key || "";
+  $("sender").hidden = receiving; $("receiver").hidden = !receiving;
+  $("receiveLink").hidden = receiving; text.readOnly = receiving;
+  if (receiving) {
+    document.title = "Receive from Car · Clip to Car";
+    $("title").textContent = "Receive text from car";
+    $("intro").textContent = "Reports sent from your car appear here. Copy the exact text or download it for analysis.";
+    $("textLabel").textContent = "Received text / JSON report";
+  } else {
+    var receiveUrl = location.origin + "/receive";
+    $("link").href = receiveUrl; $("link").textContent = receiveUrl;
+    try { $("qr").innerHTML = makeQrSvg(receiveUrl, 8); } catch (e) { $("qr").hidden = true; }
+  }
+  function size() {
+    var bytes = new TextEncoder().encode(text.value).length;
+    $("size").textContent = bytes.toLocaleString() + " bytes of text · 1 MiB message limit";
+  }
+  text.addEventListener("input", size);
+  function api(path, data) {
+    var init = { cache:"no-store", headers:{ Authorization:"Bearer " + token } };
+    if (data) { init.method = "POST"; init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(data); }
+    return fetch(path, init).then(function (res) {
+      return res.json().then(function (body) {
+        if (!res.ok) {
+          if (res.status === 401) $("settings").open = true;
+          var err = new Error(body.error || "Server error (" + res.status + ")"); err.status = res.status; throw err;
+        }
+        return body;
+      });
+    });
+  }
+  function checkSetup() {
+    var problem = keyProblem(key);
+    if (!token || problem || !crypto.subtle) {
+      $("settings").open = true; $("send").disabled = true;
+      say(!token ? "Enter this device’s token and key above." : problem || "This browser cannot encrypt reports.");
+      return false;
+    }
+    $("send").disabled = false; return true;
+  }
+  function expiry(meta) { return new Date(meta.expiresAt).toLocaleTimeString(); }
+  function poll(g) {
+    if (g !== generation) return;
+    if (document.hidden) { timer = setTimeout(function () { poll(g); }, 3000); return; }
+    api("/outbox/peek").then(function (meta) {
+      if (g !== generation) return;
+      pendingId = meta.present ? meta.id : null;
+      $("delete").hidden = !pendingId && !loadedId;
+      if (!receiving) {
+        say(meta.present ? "A report is waiting on the receiver. Expires at " + expiry(meta) + "." : "Ready to send.");
+        return;
+      }
+      if (!meta.present) { say(loadedId ? "Server copy is gone. You can still copy or download the text displayed here." : "Waiting for a report from the car…"); return; }
+      if (loadedId === meta.id) return;
+      say("Receiving report…");
+      return api("/outbox/read", { id:meta.id }).then(function (wire) {
+        return decryptJSON(key, wire.iv, wire.ct).catch(function () { throw new Error("Cannot decrypt this report. Check that this device uses the car’s encryption key."); });
+      }).then(function (payload) {
+        if (g !== generation) return;
+        if (!payload || typeof payload.text !== "string") throw new Error("Received report has an invalid format.");
+        text.value = payload.text; size(); loadedId = meta.id;
+        $("copy").disabled = false; $("download").disabled = false;
+        say("Report received. Server copy expires at " + expiry(meta) + ".");
+      });
+    }).catch(function (e) { if (g === generation) say(e.message); })
+      .then(function () { if (g === generation && receiving) timer = setTimeout(function () { poll(g); }, 3000); });
+  }
+  function start() { generation++; clearTimeout(timer); if (checkSetup()) poll(generation); }
+  $("setup").onsubmit = function (event) {
+    event.preventDefault();
+    var nextToken = $("token").value.trim(), nextKey = $("key").value.trim();
+    var problem = keyProblem(nextKey);
+    if (!nextToken || problem) { say(problem || "Enter an access token."); return; }
+    token = nextToken; key = nextKey; loadedId = null; retry = null;
+    var saved = safeLS(function () { localStorage.setItem("ctc.token", token); localStorage.setItem("ctc.key", key); return true; });
+    $("settings").open = !saved; start();
+    if (!saved) say("Setup works for this page, but this browser could not remember it.");
+  };
+  $("paste").onclick = function () {
+    function fallback() { text.focus(); say("Long-press the text field and choose Paste."); }
+    if (!navigator.clipboard || !navigator.clipboard.readText) { fallback(); return; }
+    try { navigator.clipboard.readText().then(function (value) { text.value = value; size(); say("Text pasted. Tap Send when ready."); }, fallback); }
+    catch (e) { fallback(); }
+  };
+  $("send").onclick = function () {
+    if (!checkSetup()) return;
+    var value = text.value;
+    if (!value.trim()) { say("Paste some text first."); return; }
+    var payload = { text:value };
+    if (new TextEncoder().encode(JSON.stringify(payload)).length > MAX_PAYLOAD_BYTES) { say("Report is too large. The encoded message must fit within 1 MiB."); return; }
+    $("send").disabled = true; say("Encrypting and sending…");
+    var encrypt = retry && retry.text === value && retry.key === key ? Promise.resolve(retry.wire) : encryptJSON(key, payload).then(function (wire) {
+      wire.id = b64uEncode(randomBytes(16)); retry = { text:value, key:key, wire:wire }; return wire;
+    });
+    encrypt.then(function (wire) { return api("/outbox", wire); }).then(function (result) {
+      pendingId = result.id; $("delete").hidden = false;
+      say("Sent. Open the receiver on your PC or phone. Expires at " + expiry(result) + ".");
+    }).catch(function (e) { say(e.message + (e.status ? "" : " — tap Send to retry.")); })
+      .then(function () { $("send").disabled = false; });
+  };
+  $("copy").onclick = function () {
+    function fallback() { text.focus(); text.select(); say("Text selected. Use your browser’s Copy command."); }
+    if (!navigator.clipboard || !navigator.clipboard.writeText) { fallback(); return; }
+    try { navigator.clipboard.writeText(text.value).then(function () { say("Text copied."); }, fallback); }
+    catch (e) { fallback(); }
+  };
+  $("download").onclick = function () {
+    var isJSON = false;
+    try { JSON.parse(text.value); isJSON = true; } catch (e) {}
+    var blob = new Blob([text.value], { type:isJSON ? "application/json;charset=utf-8" : "text/plain;charset=utf-8" });
+    var url = URL.createObjectURL(blob), link = document.createElement("a");
+    link.href = url; link.download = "car-report." + (isJSON ? "json" : "txt"); document.body.appendChild(link); link.click();
+    setTimeout(function () { URL.revokeObjectURL(url); link.remove(); }, 1000);
+  };
+  $("delete").onclick = function () {
+    var id = pendingId || loadedId;
+    if (!id) return;
+    generation++; clearTimeout(timer);
+    $("delete").disabled = true;
+    api("/outbox/delete", { id:id }).catch(function (e) { if (e.status !== 404) throw e; }).then(function () {
+      pendingId = null; loadedId = null; retry = null; $("delete").hidden = true;
+      if (receiving) { text.value = ""; size(); $("copy").disabled = true; $("download").disabled = true; }
+      say("Report deleted.");
+    }).catch(function (e) { say(e.message); }).then(function () {
+      $("delete").disabled = false;
+      if (receiving) timer = setTimeout(function () { poll(generation); }, 3000);
+    });
+  };
+  start();
+})();
+</script>
+</body>
+</html>
